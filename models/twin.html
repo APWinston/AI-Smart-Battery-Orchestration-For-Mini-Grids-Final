@@ -170,6 +170,8 @@
   #topbar{background:#0f171f;border-bottom:1px solid #1f2c39;box-shadow:none;}
   #tTitle{color:#f2f8fc;} #tMeta{color:#b7c7d4 !important;}
   #tProg{background:#1c2938;}
+  #tHome{background:#182430;color:#dfeaf3;border:1px solid #2c3d4e;border-radius:9px;padding:8px 15px;cursor:pointer;font-family:inherit;font-size:13px;font-weight:600;white-space:nowrap;}
+  #tHome:hover{background:#22303f;}
   #tStop{background:#182430;color:#dfeaf3;border-color:#2c3d4e;}
   #tStop:hover{background:#22303f;}
   #banner{background:#0d2b1e;color:#7fe3ad;border-bottom-color:#1d4d36;}
@@ -200,14 +202,15 @@
     <a class="navlink" onclick="goSlide(0)">Home</a>
     <a class="navlink" onclick="goSlide(1)">The Agent</a>
     <a class="navlink" onclick="goSlide(2)">Live Weather</a>
-    <button class="pillbtn" onclick="showPage('login')">Operator Login</button>
+    <a class="navlink" id="navlogout" style="display:none" onclick="logout()">Logout</a>
+    <button class="pillbtn" id="navgo" onclick="navGo()">Operator Login</button>
   </div>
   <div id="hero"><div class="inner">
     <div id="heyebrow"></div>
     <h1 id="hhead"></h1>
     <div id="hsub"></div>
     <div class="btnrow">
-      <button class="pillbtn" onclick="showPage('login')">Operator Login</button>
+      <button class="pillbtn" id="herogo" onclick="navGo()">Operator Login</button>
       <button class="ghostbtn" onclick="nextSlide()">Learn More</button>
     </div>
   </div></div>
@@ -258,6 +261,7 @@
   <div id="tTitle">SREP EMS</div>
   <div id="tMeta"></div>
   <div id="tProg"><i id="tProgFill"></i></div>
+  <button id="tHome">Home</button>
   <button id="tStop">Stop and reconfigure</button>
 </div>
 <div id="banner"></div>
@@ -849,6 +853,22 @@ function restartTimer(){clearInterval(slideTimer);slideTimer=setInterval(nextSli
 
 let TOKEN=localStorage.getItem('srep_token')||'';
 let PAGE='home';
+let FIRSTROUTE=true, RUNACTIVE=false;
+function navGo(){
+  if(!TOKEN) showPage('login');
+  else if(RUNACTIVE) showPage('app');
+  else showPage('setup');
+}
+function logout(){
+  TOKEN=''; localStorage.removeItem('srep_token');
+  RUNACTIVE=false; updateNavChrome(); showPage('home');
+}
+function updateNavChrome(){
+  const lbl = !TOKEN ? 'Operator Login' : (RUNACTIVE ? 'Open Dashboard' : 'Configure Run');
+  const g1=$('navgo'), g2=$('herogo'), lo=$('navlogout');
+  if(g1) g1.textContent=lbl; if(g2) g2.textContent=lbl;
+  if(lo) lo.style.display = TOKEN ? 'inline' : 'none';
+}
 function showPage(p){
   PAGE=p;
   $('home').style.display = p==='home'?'block':'none';
@@ -862,10 +882,12 @@ $('loginbtn').onclick=async()=>{
       body:JSON.stringify({username:$('l_user').value,password:$('l_pass').value})});
     if(!r.ok) throw new Error(r.status===403?'Invalid username or password':'Server error '+r.status);
     TOKEN=(await r.json()).token; localStorage.setItem('srep_token',TOKEN);
+    FIRSTROUTE=true;
     await tick();
   }catch(e){ $('loginerr').textContent=e.message; $('loginerr').style.display='block'; }
 };
 $('l_pass').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginbtn').click();});
+$('tHome').onclick=()=>showPage('home');
 
 const SITES={"Akosombo":[6.30,0.05],"Accra":[5.56,-0.20],"Bolgatanga":[10.79,-0.85],
   "Tamale":[9.40,-0.84],"Kumasi":[6.69,-1.62],"Axim":[4.87,-2.24],"Custom coordinates":null};
@@ -876,9 +898,18 @@ function hhmm(h){return String(Math.floor(h)%24).padStart(2,'0')+':'+String(Math
 function handle(s){
   LASTSTATE=s;
   const idle=(s.status==='idle'||s.status==='stopped');
-  if(!TOKEN){ if(PAGE!=='login') showPage('home'); }
-  else if(idle){ showPage('setup'); }
-  else { showPage('app'); $('home').style.display='none'; $('login').style.display='none'; $('setup').style.display='none'; }
+  RUNACTIVE = !!TOKEN && !idle;
+  updateNavChrome();
+  if(FIRSTROUTE){
+    FIRSTROUTE=false;
+    if(!TOKEN) showPage('home');
+    else if(idle) showPage('setup');
+    else showPage('app');
+  } else {
+    if(!TOKEN && (PAGE==='app'||PAGE==='setup')) showPage('home');
+    else if(TOKEN && idle && PAGE==='app') showPage('setup');
+    else if(TOKEN && !idle && PAGE==='setup') showPage('app');
+  }
   const mm=s.models||{};
   $('chipmodels').textContent = (mm.have_lstm&&mm.have_ppo)?'🟢 Real LSTM + PPO'
     : (mm.have_ppo?'PPO only':(mm.have_lstm?'LSTM only':'Rule based control'));
