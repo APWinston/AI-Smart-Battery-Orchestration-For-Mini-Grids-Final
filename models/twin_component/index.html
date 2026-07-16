@@ -1,0 +1,505 @@
+<!DOCTYPE html><html><head><meta charset='utf-8'><style>html,body{margin:0;padding:0;background:transparent;}</style></head><body>
+<style>
+  :root{--ink:#eaf6ff;--muted:#7c95a4;--good:#10b981;--bad:#ef4444;}
+  #root{font-family:'IBM Plex Mono',ui-monospace,monospace;color:#cfe;position:relative;height:752px;}
+  #nav{position:absolute;left:10px;top:10px;z-index:8;display:flex;gap:8px;align-items:center;}
+  #nav button{background:rgba(12,18,24,.78);color:#9fb6c4;border:1px solid #243240;border-radius:9px;
+     padding:7px 12px;cursor:pointer;font-family:inherit;font-size:13px;backdrop-filter:blur(4px);}
+  #nav button.on{background:var(--good);color:#04130d;border-color:var(--good);font-weight:600;}
+  #view3d,#viewdash{position:absolute;inset:0;}
+  #viewdash{display:none;overflow:auto;padding:54px 6px 10px;}
+  #scene{position:absolute;inset:0;width:100%;height:100%;display:block;}
+  #labels{position:absolute;inset:0;pointer-events:none;z-index:3;}
+  .lab3d{position:absolute;transform:translate(-50%,-130%);background:rgba(10,16,22,.82);
+     border:1px solid #283a48;border-radius:8px;padding:4px 9px;color:#dfeefb;font-size:11px;
+     white-space:nowrap;pointer-events:none;box-shadow:0 4px 14px rgba(0,0,0,.4);}
+  .lab3d b{font-weight:600;} .lab3d span{color:#8fb0c2;font-size:10px;margin-left:6px;}
+  #deck{position:absolute;left:12px;bottom:12px;z-index:4;background:rgba(10,18,16,.78);
+     border:1px solid #1d3a30;border-radius:12px;padding:12px 16px;min-width:190px;}
+  #deck .t{font-size:10px;color:#6fae93;letter-spacing:.08em;text-transform:uppercase;}
+  #d3dec{font-size:21px;font-weight:700;color:var(--ink);margin:2px 0 3px;}
+  #d3stat{font-size:12px;color:var(--good);}
+  .statusdot{position:absolute;right:12px;top:14px;z-index:8;width:11px;height:11px;border-radius:50%;
+     background:#64748b;box-shadow:0 0 9px #64748b;}
+  .panel{background:#0d141c;border:1px solid #1c2733;border-radius:12px;}
+  .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px;}
+  .kpi{padding:9px 11px;} .kpi .l{font-size:11px;color:var(--muted);} .kpi .v{font-size:20px;color:var(--ink);font-weight:600;}
+  .grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:10px;}
+  .h{font-size:12px;color:#86a0b0;margin:2px 0 6px 2px;letter-spacing:.04em;text-transform:uppercase;}
+  .bar{height:9px;background:#16202b;border-radius:5px;position:relative;margin:3px 0 9px;}
+  .bar i{position:absolute;top:0;bottom:0;border-radius:5px;}
+  #log{font-size:11px;line-height:1.55;height:120px;overflow:auto;color:#9fb6c4;padding:6px 8px;}
+  .act{font-size:20px;font-weight:700;margin:2px 0 8px;} .sub{font-size:11px;color:var(--muted);}
+</style>
+<div id="root">
+  <div id="nav">
+    <button id="b3d" class="on">🌍 3D environment</button>
+    <button id="bdash">📊 Operator console</button>
+  </div>
+  <span class="statusdot" id="sdot"></span>
+
+  <div id="view3d">
+    <canvas id="scene"></canvas>
+    <div id="labels"></div>
+    <div id="deck"><div class="t">PPO agent decision</div>
+      <div id="d3dec">—</div><div id="d3stat">—</div></div>
+  </div>
+
+  <div id="viewdash">
+    <div class="kpis">
+      <div class="kpi panel"><div class="l">State of charge</div><div class="v" id="kSoc"></div></div>
+      <div class="kpi panel"><div class="l">State of health</div><div class="v" id="kSoh"></div></div>
+      <div class="kpi panel"><div class="l">Energy served</div><div class="v" id="kSrv"></div></div>
+      <div class="kpi panel"><div class="l">Loss-of-load</div><div class="v" id="kLol"></div></div>
+      <div class="kpi panel"><div class="l">Throughput</div><div class="v" id="kEfc"></div></div>
+    </div>
+    <div class="panel" style="padding:8px 10px;margin-bottom:10px;">
+      <div class="h">Plant single-line · power flow + AI data path</div>
+      <svg id="sld" viewBox="0 0 760 220" style="width:100%;height:210px;"></svg>
+    </div>
+    <div class="grid2">
+      <div class="panel" style="padding:8px 10px;">
+        <div class="h">Power flow &amp; state of charge — 24 h</div>
+        <canvas id="chart" width="700" height="250" style="width:100%;height:250px;"></canvas>
+      </div>
+      <div>
+        <div class="panel" style="padding:10px 12px;margin-bottom:10px;">
+          <div class="h">PPO decision</div><div class="act" id="dAct"></div>
+          <div class="sub">Baseline</div><div class="bar"><i id="bBase"></i></div>
+          <div class="sub">PPO residual (×0.25)</div><div class="bar"><i id="bRes"></i></div>
+          <div class="sub">Final action</div><div class="bar"><i id="bAct"></i></div>
+          <div class="sub" id="dInfo" style="margin-top:6px;"></div>
+        </div>
+        <div class="panel"><div class="h" style="margin:8px 0 0 10px">Operations log</div><div id="log"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ---------- injected real-model state ---------- */
+let S={hour:12,soc:0.5,soh:1,solar:0,load:0,power:0,ghi:0,base:0,resid:0,act:0,unmet:0,
+       kwp:75,kwh:237,loaddes:8.4,maxP:118.5,served:100,lol:0,efc:0,ready:false,running:false};
+let HIST={solar:Array(24).fill(null),load:Array(24).fill(null),
+          power:Array(24).fill(null),soc:Array(24).fill(null)};
+let FC={solar:[],load:[]};
+let LOG=[];
+let view='3d';
+
+/* ---------- shims the HTML scene expects ---------- */
+const C={pv_derating:0.75, soc_min:0.10, soc_max:0.95};
+let tier={kwp:75, kwh:237, load:8.4};
+let maxP=118.5;
+let ready=false;
+let sim={hour:12, soc:0.5, soh:1.0};
+const LOAD_SHAPE=[.45,.40,.38,.38,.42,.55,.85,1.05,.95,.82,.78,.80,
+                  .82,.80,.78,.82,.95,1.35,1.95,2.20,2.05,1.55,.95,.60];
+let DAY={ghi:Array(24).fill(0), month:6, dow:2};
+function dayVal(arr,h){const i=Math.floor(h)%24,j=(i+1)%24,f=h-Math.floor(h);return arr[i]*(1-f)+arr[j]*f;}
+function loadKW(h){const i=Math.floor(h)%24,j=(i+1)%24,f=h-Math.floor(h);return tier.load*(LOAD_SHAPE[i]*(1-f)+LOAD_SHAPE[j]*f);}
+
+/* ====================== REAL HTML 3D SCENE (verified) ====================== */
+const canvas=document.getElementById('scene');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.0;
+
+const scene=new THREE.Scene(); scene.fog=new THREE.Fog(0x9fb6c2,70,260);
+const camera=new THREE.PerspectiveCamera(42,innerWidth/innerHeight,.1,600);
+
+const hemi=new THREE.HemisphereLight(0xcfe2f0,0x3a3026,0.6); scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xfff2dc,2.0);
+sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near=1; sun.shadow.camera.far=200;
+sun.shadow.camera.left=-50; sun.shadow.camera.right=50; sun.shadow.camera.top=50; sun.shadow.camera.bottom=-50;
+sun.shadow.bias=-0.0004; scene.add(sun); scene.add(sun.target);
+const fill=new THREE.DirectionalLight(0x88a0c0,0.25); fill.position.set(-30,20,-20); scene.add(fill);
+
+/* sky dome */
+const skyUniforms={top:{value:new THREE.Color(0x2a4a78)},bot:{value:new THREE.Color(0xcdd9e0)},off:{value:18},exp:{value:0.6}};
+const sky=new THREE.Mesh(new THREE.SphereGeometry(400,32,16),
+  new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms:skyUniforms,
+    vertexShader:`varying vec3 w; void main(){ w=(modelMatrix*vec4(position,1.)).xyz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`uniform vec3 top; uniform vec3 bot; uniform float off; uniform float exp; varying vec3 w;
+      void main(){ float h=normalize(w+vec3(0.,off,0.)).y; gl_FragColor=vec4(mix(bot,top,pow(max(h,0.),exp)),1.);}`}));
+sky.material.toneMapped=false; scene.add(sky);
+
+/* ground + pad + fence */
+const terrain=new THREE.Mesh(new THREE.PlaneGeometry(600,600),new THREE.MeshStandardMaterial({color:0x7d7355,roughness:1}));
+terrain.rotation.x=-Math.PI/2; terrain.position.y=-0.02; terrain.receiveShadow=true; scene.add(terrain);
+const pad=new THREE.Mesh(new THREE.BoxGeometry(52,0.25,40),new THREE.MeshStandardMaterial({color:0x6f6a60,roughness:.95}));
+pad.position.set(0,0.12,0); pad.receiveShadow=true; scene.add(pad);
+const fenceMat=new THREE.MeshStandardMaterial({color:0x5b6066,roughness:.6,metalness:.6});
+function fenceLine(x1,z1,x2,z2){const len=Math.hypot(x2-x1,z2-z1),n=Math.round(len/3);
+  for(let i=0;i<=n;i++){const t=i/n,px=x1+(x2-x1)*t,pz=z1+(z2-z1)*t;
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(.07,.07,2,6),fenceMat);
+    post.position.set(px,1,pz); post.castShadow=true; scene.add(post);}
+  const rail=new THREE.Mesh(new THREE.BoxGeometry(len,.06,.06),fenceMat);
+  rail.position.set((x1+x2)/2,1.7,(z1+z2)/2); rail.rotation.y=-Math.atan2(z2-z1,x2-x1); scene.add(rail);}
+fenceLine(-25,-20,25,-20); fenceLine(-25,20,25,20); fenceLine(-25,-20,-25,20); fenceLine(25,-20,25,20);
+
+/* solar array */
+const panelMats=[];
+const steel=new THREE.MeshStandardMaterial({color:0x9aa2a8,roughness:.5,metalness:.8});
+const glassMat=()=>{const m=new THREE.MeshStandardMaterial({color:0x10243d,roughness:.25,metalness:.55,emissive:0x0a1c33,emissiveIntensity:0});panelMats.push(m);return m;};
+const array=new THREE.Group(); array.position.set(-14,0,0); scene.add(array);
+for(let r=0;r<3;r++)for(let c=0;c<5;c++){
+  const g=new THREE.Group();
+  const panel=new THREE.Mesh(new THREE.BoxGeometry(2.6,.1,1.7),glassMat());
+  panel.rotation.x=-0.42; panel.position.y=1.5; panel.castShadow=true;
+  for(let k=-1;k<2;k++){const ml=new THREE.Mesh(new THREE.BoxGeometry(.04,.12,1.72),new THREE.MeshStandardMaterial({color:0x2c4a66}));
+    ml.rotation.x=-0.42; ml.position.set(k*0.85,1.5,0); g.add(ml);}
+  const legA=new THREE.Mesh(new THREE.BoxGeometry(.1,1.4,.1),steel); legA.position.set(0,.7,.55);
+  const legB=new THREE.Mesh(new THREE.BoxGeometry(.1,2.0,.1),steel); legB.position.set(0,1.0,-.55);
+  legA.castShadow=legB.castShadow=true; g.add(panel); g.add(legA); g.add(legB);
+  g.position.set(c*3.0,0,r*2.6-2.6); array.add(g);
+}
+const solarAnchor=new THREE.Vector3(-8,3.6,0);
+
+/* ---------- WEATHER SENSOR STATION (the API feed) ---------- */
+const sensors=new THREE.Group(); sensors.position.set(-21,0,-9); scene.add(sensors);
+const mast=new THREE.Mesh(new THREE.CylinderGeometry(.08,.11,5,8),steel); mast.position.y=2.5; mast.castShadow=true; sensors.add(mast);
+const arm=new THREE.Mesh(new THREE.BoxGeometry(1.3,.05,.05),steel); arm.position.set(.55,4.2,0); sensors.add(arm);
+const pyraMat=new THREE.MeshStandardMaterial({color:0xeef3f7,roughness:.3,metalness:.1,emissive:0xffe6a6,emissiveIntensity:0});
+const pyra=new THREE.Mesh(new THREE.SphereGeometry(.2,16,12,0,Math.PI*2,0,Math.PI/2),pyraMat); pyra.position.set(1.05,4.22,0); sensors.add(pyra);
+const anem=new THREE.Group(); anem.position.set(0,5.05,0); sensors.add(anem);
+for(let i=0;i<3;i++){const a=i/3*Math.PI*2;
+  const spoke=new THREE.Mesh(new THREE.BoxGeometry(.42,.03,.03),steel); spoke.position.set(Math.cos(a)*.21,0,Math.sin(a)*.21); spoke.rotation.y=-a; anem.add(spoke);
+  const cup=new THREE.Mesh(new THREE.SphereGeometry(.11,10,8,0,Math.PI),new THREE.MeshStandardMaterial({color:0xdde3e8,roughness:.5}));
+  cup.position.set(Math.cos(a)*.42,0,Math.sin(a)*.42); anem.add(cup);}
+const logger=new THREE.Mesh(new THREE.BoxGeometry(.55,.8,.4),new THREE.MeshStandardMaterial({color:0x2a3640,roughness:.6,metalness:.4}));
+logger.position.set(.45,.8,.35); logger.castShadow=true; sensors.add(logger);
+const sLedMat=new THREE.MeshStandardMaterial({color:0x113,emissive:0x33d36f,emissiveIntensity:1});
+const sLed=new THREE.Mesh(new THREE.SphereGeometry(.05,8,8),sLedMat); sLed.position.set(.45,1.12,.56); sensors.add(sLed);
+const sensorAnchor=new THREE.Vector3(-21,5.6,-9);
+
+/* ---------- BESS ---------- */
+const bess=new THREE.Group(); bess.position.set(2,0,10); scene.add(bess);
+const plinth=new THREE.Mesh(new THREE.BoxGeometry(8.4,.5,3.4),new THREE.MeshStandardMaterial({color:0x55524c,roughness:.95}));
+plinth.position.y=.25; plinth.receiveShadow=true; bess.add(plinth);
+const body=new THREE.Mesh(new THREE.BoxGeometry(8,3,3),new THREE.MeshStandardMaterial({color:0x33424a,roughness:.55,metalness:.55}));
+body.position.y=2.0; body.castShadow=true; body.receiveShadow=true; bess.add(body);
+const roof=new THREE.Mesh(new THREE.BoxGeometry(8.2,.18,3.2),new THREE.MeshStandardMaterial({color:0x2a363d,roughness:.6,metalness:.5}));
+roof.position.y=3.55; bess.add(roof);
+const NMOD=12, modMats=[];
+const rackBack=new THREE.Mesh(new THREE.BoxGeometry(7.4,2.4,.2),new THREE.MeshStandardMaterial({color:0x10171b,roughness:.9}));
+rackBack.position.set(0,2.0,1.46); bess.add(rackBack);
+for(let i=0;i<NMOD;i++){
+  const m=new THREE.MeshStandardMaterial({color:0x1c2a30,roughness:.5,metalness:.3,emissive:0x000000,emissiveIntensity:0}); modMats.push(m);
+  const mod=new THREE.Mesh(new THREE.BoxGeometry(.5,2.0,.16),m); mod.position.set(-3.3+i*0.6,2.0,1.56); bess.add(mod);
+  const led=new THREE.Mesh(new THREE.SphereGeometry(.05,8,8),new THREE.MeshStandardMaterial({color:0x223,emissive:0x000,emissiveIntensity:0}));
+  led.position.set(-3.3+i*0.6,2.9,1.66); m.userLed=led; bess.add(led);
+}
+const gaugeTrack=new THREE.Mesh(new THREE.BoxGeometry(.18,2.4,.5),new THREE.MeshStandardMaterial({color:0x10171b,roughness:.9})); gaugeTrack.position.set(-4.05,2.0,0); bess.add(gaugeTrack);
+const gaugeFill=new THREE.Mesh(new THREE.BoxGeometry(.22,2.3,.42),new THREE.MeshStandardMaterial({color:0x3fd6bf,emissive:0x3fd6bf,emissiveIntensity:.7})); gaugeFill.position.set(-4.05,2.0,0); bess.add(gaugeFill);
+const battBus=new THREE.Vector3(4,2.0,9.5);
+
+/* ---------- inverter / PCS ---------- */
+const ctrl=new THREE.Group(); ctrl.position.set(12,0,7); scene.add(ctrl);
+const cwall=new THREE.Mesh(new THREE.BoxGeometry(4,3,3.4),new THREE.MeshStandardMaterial({color:0xb9b2a4,roughness:.95})); cwall.position.y=1.5; cwall.castShadow=true; ctrl.add(cwall);
+const croof=new THREE.Mesh(new THREE.BoxGeometry(4.4,.3,3.8),new THREE.MeshStandardMaterial({color:0x6b7378,roughness:.6,metalness:.5})); croof.position.y=3.15; ctrl.add(croof);
+const door=new THREE.Mesh(new THREE.BoxGeometry(1,2,.1),new THREE.MeshStandardMaterial({color:0x4a4540})); door.position.set(0,1,1.71); ctrl.add(door);
+const invAnchor=new THREE.Vector3(12,2.4,7);
+
+/* ---------- AI BATTERY EMS (the LSTM+PPO controller) ---------- */
+const ems=new THREE.Group(); ems.position.set(8,0,13.5); scene.add(ems);
+const rack=new THREE.Mesh(new THREE.BoxGeometry(2.2,2.8,1.5),new THREE.MeshStandardMaterial({color:0x121a20,roughness:.5,metalness:.5}));
+rack.position.y=1.4; rack.castShadow=true; ems.add(rack);
+const emsStripMat=new THREE.MeshStandardMaterial({color:0x5ad1ff,emissive:0x5ad1ff,emissiveIntensity:1});
+const emsStrip=new THREE.Mesh(new THREE.BoxGeometry(1.7,.14,.05),emsStripMat); emsStrip.position.set(0,2.45,.76); ems.add(emsStrip);
+const emsLeds=[];
+for(let i=0;i<7;i++){const lm=new THREE.MeshStandardMaterial({color:0x111,emissive:0x5ad1ff,emissiveIntensity:.7});
+  const l=new THREE.Mesh(new THREE.SphereGeometry(.045,6,6),lm); l.position.set(-.78+i*.26,1.8,.76); ems.add(l); emsLeds.push(lm);}
+const emsAnchor=new THREE.Vector3(8,3.2,13.5);
+
+/* ---------- village (load) ---------- */
+const village=new THREE.Group(); village.position.set(17,0,-13); scene.add(village);
+const windows=[];
+function building(x,z,w,d,col){const g=new THREE.Group();
+  const wall=new THREE.Mesh(new THREE.BoxGeometry(w,2.4,d),new THREE.MeshStandardMaterial({color:col,roughness:.95})); wall.position.y=1.2; wall.castShadow=true; wall.receiveShadow=true; g.add(wall);
+  const mroof=new THREE.Mesh(new THREE.BoxGeometry(w+.3,.5,d+.3),new THREE.MeshStandardMaterial({color:0x8a5a3a,roughness:.7,metalness:.3})); mroof.position.y=2.55; mroof.rotation.z=0.06; g.add(mroof);
+  const win=new THREE.Mesh(new THREE.BoxGeometry(.6,.6,.06),new THREE.MeshStandardMaterial({color:0x20242a,emissive:0xffcf6e,emissiveIntensity:0})); win.position.set(0,1.2,d/2+.04); g.add(win); windows.push(win);
+  g.position.set(x,0,z); village.add(g);}
+building(0,0,3,3,0xcabfa6); building(4,-1.5,3.4,2.6,0xbdae90); building(-3.5,1.5,2.8,3,0xc7baa0);
+building(2.5,3,3,2.8,0xb6a888); building(-1,-3,3.2,2.6,0xc2b49a); building(6,1.6,2.6,2.8,0xc9bca2);
+const villageFeed=new THREE.Vector3(17,1.6,-13);
+
+/* ---------- power lines ---------- */
+function powerline(ax,az,bx,bz,h,thick){const a=new THREE.Vector3(ax,h,az),b=new THREE.Vector3(bx,h,bz);
+  const dir=new THREE.Vector3().subVectors(b,a),len=dir.length();
+  const cable=new THREE.Mesh(new THREE.CylinderGeometry(thick||.05,thick||.05,len,5),new THREE.MeshStandardMaterial({color:0x1b1f24,roughness:.7,metalness:.3}));
+  cable.position.copy(a).addScaledVector(dir,.5); cable.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir.clone().normalize()); scene.add(cable);
+  const n=Math.max(1,Math.round(len/6));
+  for(let i=0;i<=n;i++){const t=i/n;const post=new THREE.Mesh(new THREE.CylinderGeometry(.08,.11,h,6),new THREE.MeshStandardMaterial({color:0x6b5a44,roughness:1}));
+    post.position.set(ax+(bx-ax)*t,h/2,az+(bz-az)*t); post.castShadow=true; scene.add(post);}}
+powerline(-8,0,12,7,2.0); powerline(4,9.5,12,7,1.9); powerline(12,7,17,-13,2.6);
+
+/* ---------- sun & moon ---------- */
+const sunDisc=new THREE.Mesh(new THREE.SphereGeometry(3,24,24),new THREE.MeshBasicMaterial({color:0xffe6a6})); sunDisc.material.toneMapped=false; scene.add(sunDisc);
+const moon=new THREE.Mesh(new THREE.SphereGeometry(1.8,20,20),new THREE.MeshBasicMaterial({color:0xccd4e2})); moon.material.toneMapped=false; scene.add(moon);
+
+/* ---------- flow particles ---------- */
+function makeFlow(color,arc){const grp=new THREE.Group();scene.add(grp);const pts=[];const mat=new THREE.MeshBasicMaterial({color});mat.toneMapped=false;
+  for(let i=0;i<9;i++){const m=new THREE.Mesh(new THREE.SphereGeometry(.13,8,8),mat.clone());m.visible=false;grp.add(m);pts.push(m);}
+  return {pts,from:new THREE.Vector3(),to:new THREE.Vector3(),active:0,phase:0,arc:(arc==null?0.25:arc)};}
+const flows={
+  sunPanel:makeFlow(0xf3b53f,0.7), solarInv:makeFlow(0xffe0a0,0.25),
+  invBatt:makeFlow(0x3fd6bf,0.25), battInv:makeFlow(0xff9b3d,0.25),
+  invLoad:makeFlow(0xffe0a0,0.35),
+  senseEms:makeFlow(0x5ad1ff,0.5),   // sensor data -> AI EMS
+  emsBatt:makeFlow(0x5ad1ff,0.3),    // PPO control signal -> battery
+};
+function updateFlow(f,dt){f.phase=(f.phase+dt*(.35+f.active))%1;const n=Math.round(f.active*f.pts.length);
+  for(let i=0;i<f.pts.length;i++){const p=f.pts[i];
+    if(i<n){p.visible=true;let t=(f.phase+i/n)%1;p.position.lerpVectors(f.from,f.to,t);p.position.y+=Math.sin(t*Math.PI)*f.arc;p.scale.setScalar(.7+.5*Math.sin(t*Math.PI));}else p.visible=false;}}
+
+/* ---------- camera ---------- */
+let camAz=1.05,camEl=0.34,camR=50,autoRot=true,drag=false,px=0,py=0;
+if(matchMedia('(prefers-reduced-motion: reduce)').matches)autoRot=false;
+canvas.addEventListener('pointerdown',e=>{drag=true;autoRot=false;px=e.clientX;py=e.clientY});
+addEventListener('pointerup',()=>drag=false);
+addEventListener('pointermove',e=>{if(!drag)return;camAz-=(e.clientX-px)*.005;camEl+=(e.clientY-py)*.005;camEl=Math.max(.1,Math.min(1.2,camEl));px=e.clientX;py=e.clientY;});
+canvas.addEventListener('wheel',e=>{e.preventDefault();camR=Math.max(26,Math.min(100,camR+e.deltaY*.03));},{passive:false});
+function updateCamera(dt){if(autoRot)camAz+=dt*0.04;
+  camera.position.set(Math.cos(camAz)*Math.cos(camEl)*camR,Math.sin(camEl)*camR+5,Math.sin(camAz)*Math.cos(camEl)*camR);
+  camera.lookAt(2,2.5,2);}
+
+/* ---------- sky time-of-day ---------- */
+const SKYTOP=[[0,0x0b1430],[5,0x12224a],[6.5,0x4a4a78],[8,0x3f6aa8],[12,0x2f6fc0],[16,0x3a6fb0],[18,0x9a5a55],[19.5,0x3a2c52],[21,0x121a36],[24,0x0b1430]];
+const SKYBOT=[[0,0x0a1020],[5,0x1c2436],[6.5,0xc88a6a],[8,0xc6d2da],[12,0xd6e2ea],[16,0xcdd9e0],[18,0xe0a070],[19.5,0x6a4a58],[21,0x161e2e],[24,0x0a1020]];
+function rampColor(arr,h){for(let i=0;i<arr.length-1;i++){if(h>=arr[i][0]&&h<=arr[i+1][0]){const t=(h-arr[i][0])/(arr[i+1][0]-arr[i][0]);return new THREE.Color(arr[i][1]).lerp(new THREE.Color(arr[i+1][1]),t);}}return new THREE.Color(arr[0][1]);}
+
+/* ---------- 3D labels ---------- */
+const labelsRoot=document.getElementById('labels'); let labelsOn=true;
+const LABELS=[
+  {anchor:solarAnchor.clone().setY(4.4), title:'Solar array', sub:()=>tier.kwp+' kWp'},
+  {anchor:sensorAnchor, title:'Weather sensors', sub:()=>Math.round(ghiNow(sim.hour))+' W/m²'},
+  {anchor:new THREE.Vector3(2,4.2,10), title:'Battery storage', sub:()=>tier.kwh+' kWh · '+Math.round(sim.soc*100)+'%'},
+  {anchor:emsAnchor, title:'AI Battery EMS', sub:()=>'LSTM + PPO'},
+  {anchor:invAnchor.clone().setY(3.9), title:'Inverter / PCS', sub:()=>null},
+  {anchor:new THREE.Vector3(17,3.6,-13), title:'Community load', sub:()=>Math.round(loadKW(sim.hour))+' kW'},
+];
+LABELS.forEach(L=>{const el=document.createElement('div');el.className='lab3d';
+  el.innerHTML='<b>'+L.title+'</b>'+(L.sub()!==null?'<span></span>':'');L.el=el;L.span=el.querySelector('span');labelsRoot.appendChild(el);});
+const _v=new THREE.Vector3();
+function updateLabels(){const W=innerWidth,H=innerHeight;
+  for(const L of LABELS){if(!labelsOn){L.el.style.display='none';continue;}
+    _v.copy(L.anchor).project(camera);
+    if(_v.z>1){L.el.style.display='none';continue;}
+    L.el.style.display='block'; L.el.style.left=((_v.x*0.5+0.5)*W)+'px'; L.el.style.top=((-_v.y*0.5+0.5)*H)+'px';
+    if(L.span){const s=L.sub();if(s!==null)L.span.textContent=s;}}}
+
+/* ================= ghiNow + setChip (shared) ================= */
+function ghiNow(h){return DAY?dayVal(DAY.ghi,h):0;}
+
+/* ====================== HTML update3D (verified) ====================== */
+function size3D(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);}
+function update3D(st, now, real){
+  const ang=(sim.hour/24)*Math.PI*2-Math.PI/2, sx=Math.cos(ang)*90,sy=Math.sin(ang)*70,sz=40;
+  sunDisc.position.set(sx,sy,sz); sun.position.set(sx,Math.max(sy,3),sz); sun.target.position.set(0,0,0);
+  sun.intensity=Math.max(0,Math.min(1,(sy+4)/30))*2.1; sun.color.setHex(sy<14?0xffb27a:0xfff2dc);
+  sunDisc.visible=sy>-6; moon.position.set(-sx,-sy,sz); moon.visible=sy<8; hemi.intensity=.15+.32*Math.max(0,sy/70);
+  skyUniforms.top.value.copy(rampColor(SKYTOP,sim.hour)); skyUniforms.bot.value.copy(rampColor(SKYBOT,sim.hour)); scene.fog.color.copy(skyUniforms.bot.value);
+  const s=st.solar,l=st.load,charge=Math.max(0,st.power),discharge=Math.max(0,-st.power),directSolar=Math.min(s,l);
+  const solFrac=s/Math.max(tier.kwp*C.pv_derating,1); panelMats.forEach(m=>m.emissiveIntensity=.02+solFrac*.5);
+  pyraMat.emissiveIntensity=Math.min(1.1, st.ghi/1000); anem.rotation.y+=real*(0.6+solFrac*4);
+  sLedMat.emissiveIntensity=0.4+0.6*Math.abs(Math.sin(now*0.006));
+  const socT=(sim.soc-C.soc_min)/(C.soc_max-C.soc_min), lit=Math.round(socT*NMOD);
+  const col=sim.soc<.2?0xff5566:sim.soc<.4?0xffb24a:0x3fd6bf;
+  modMats.forEach((m,i)=>{const on=i<lit;m.emissive.setHex(on?col:0x000000);m.emissiveIntensity=on?.9:0;m.userLed.material.emissive.setHex(on?col:0x202833);m.userLed.material.emissiveIntensity=on?1.0:0;});
+  gaugeFill.scale.y=Math.max(.02,socT);gaugeFill.position.y=2.0-(1.15*(1-socT));gaugeFill.material.color.setHex(col);gaugeFill.material.emissive.setHex(col);
+  const act=Math.min(1,(charge+discharge)/maxP);
+  emsStripMat.emissiveIntensity=0.5+0.8*act+0.2*Math.sin(now*0.012);
+  emsLeds.forEach((m,i)=>m.emissiveIntensity=0.3+0.7*Math.abs(Math.sin(now*0.01+i*0.9)));
+  const night=sy<3, powered=st.unmet<.01;
+  windows.forEach((w,i)=>{let tg=!powered?0:(night?1.3:0.12);if(!powered&&Math.sin(now*.012+i)>0)tg=.06;w.material.emissiveIntensity+=(tg-w.material.emissiveIntensity)*.12;w.material.emissive.setHex(powered?0xffcf6e:0xff5566);});
+  const f=flows, up=sy>0;
+  f.sunPanel.from.copy(sunDisc.position);f.sunPanel.to.copy(solarAnchor);f.sunPanel.active=up?Math.min(1,solFrac+.12):0;
+  f.solarInv.from.copy(solarAnchor);f.solarInv.to.copy(invAnchor);f.solarInv.active=Math.min(1,(directSolar+charge)/Math.max(tier.load*2,1));
+  f.invBatt.from.copy(invAnchor);f.invBatt.to.copy(battBus);f.invBatt.active=Math.min(1,charge/maxP);
+  f.battInv.from.copy(battBus);f.battInv.to.copy(invAnchor);f.battInv.active=Math.min(1,discharge/maxP);
+  f.invLoad.from.copy(invAnchor);f.invLoad.to.copy(villageFeed);f.invLoad.active=Math.min(1,st.served/Math.max(tier.load*2.2,1));
+  f.senseEms.from.copy(sensorAnchor);f.senseEms.to.copy(emsAnchor);f.senseEms.active=0.8;
+  f.emsBatt.from.copy(emsAnchor);f.emsBatt.to.copy(battBus);f.emsBatt.active=0.4+0.6*act;
+  for(const k in f)updateFlow(f[k],real);
+  updateCamera(real); renderer.render(scene,camera); updateLabels();
+  const dd=document.getElementById('d3dec'),ds=document.getElementById('d3stat');
+  dd.textContent = st.power>0.5?`Charge ${Math.round(st.power)} kW`:st.power<-0.5?`Discharge ${Math.round(-st.power)} kW`:'Holding';
+  dd.style.color = ready?'var(--ink)':'var(--muted)';
+  ds.textContent = st.unmet<0.01?'Load served · '+(ready?'real LSTM+PPO':'baseline'):('SHORTFALL '+Math.round(st.unmet)+' kW');
+  ds.style.color = st.unmet<0.01?'var(--good)':'var(--bad)';
+}
+
+/* ---------- render loop: locally self-simulating between Python syncs ----------
+   The scene advances in true real time (1 h = 1 h) client-side: clock from wall
+   time, solar from today's GHI curve, load from the diurnal shape, dispatch =
+   baseline + the last synced PPO residual, SoC integrated with the same clamps
+   as the engine. Python re-syncs ground truth (and the fresh PPO residual) each
+   refresh, so drift is corrected every sync. */
+let T0=Date.now(), HOUR0=12;
+const ETA=0.95;
+
+let _last=performance.now(), _alive=true;
+function loop(){
+  if(!_alive)return; requestAnimationFrame(loop);
+  const now=performance.now(); const real=Math.min((now-_last)/1000,.1); _last=now;
+  if(view!=='3d')return;
+  autoRot=false; camAz = 1.05 + (Date.now()/1000)*0.05;   // continuous orbit across reseeds
+  const dtH=real/3600*(S.running?1:0);                     // true real-time step
+  sim.hour=(HOUR0+(S.running?(Date.now()-T0)/3.6e6:0))%24;
+  // local weather + load at the advanced clock
+  const ghiL=dayVal(DAY.ghi,sim.hour);
+  const solarL=ghiL/1000*tier.kwp*C.pv_derating;
+  const loadL=loadKW(sim.hour);
+  // dispatch: baseline + last synced residual, with the engine's SoC clamps
+  let act=Math.max(-1,Math.min(1,(solarL-loadL)/maxP + S.resid));
+  let p=act*maxP;
+  const cap=tier.kwh*S.soh;
+  if(p>=0){const mx=(C.soc_max-sim.soc)*cap/ETA/Math.max(dtH,1e-6); p=Math.min(p,mx);}
+  else{const mx=(sim.soc-C.soc_min)*cap*ETA/Math.max(dtH,1e-6); p=Math.max(p,-mx);}
+  const supply=solarL+Math.max(0,-p), demand=loadL+Math.max(0,p);
+  const unmetL=supply>=demand?0:Math.min(demand-supply,loadL);
+  const ac=Math.max(0,p), ad=Math.max(0,-p);
+  sim.soc=Math.max(C.soc_min,Math.min(C.soc_max,(sim.soc*cap+(ac*ETA-ad/ETA)*dtH)/cap));
+  const st={solar:solarL,load:loadL,power:p,unmet:unmetL,ghi:ghiL,
+            served:Math.max(0,loadL-unmetL)};
+  try{ update3D(st, now, real); }catch(e){}
+}
+size3D(); loop();
+
+/* ---------- nav ---------- */
+function setView(v){
+  view=v; labelsOn=(v==='3d');
+  document.getElementById('view3d').style.display=v==='3d'?'block':'none';
+  document.getElementById('viewdash').style.display=v==='dash'?'block':'none';
+  document.getElementById('b3d').className=v==='3d'?'on':'';
+  document.getElementById('bdash').className=v==='dash'?'on':'';
+  if(v==='3d'){ size3D(); } else { drawChart(); }
+}
+document.getElementById('b3d').onclick=()=>setView('3d');
+document.getElementById('bdash').onclick=()=>setView('dash');
+
+/* ====================== OPERATOR CONSOLE ====================== */
+const NS='http://www.w3.org/2000/svg';
+function node(svg,x,y,w,h,label,sub,col){
+  const r=document.createElementNS(NS,'rect');
+  r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('width',w);r.setAttribute('height',h);
+  r.setAttribute('rx',8);r.setAttribute('fill','#101a24');r.setAttribute('stroke',col||'#2b3a48');svg.appendChild(r);
+  const t=document.createElementNS(NS,'text');t.setAttribute('x',x+w/2);t.setAttribute('y',y+h/2+1);
+  t.setAttribute('fill','#dfeefb');t.setAttribute('font-size','12');t.setAttribute('text-anchor','middle');
+  t.textContent=label;svg.appendChild(t);
+  if(sub){const s=document.createElementNS(NS,'text');s.setAttribute('x',x+w/2);s.setAttribute('y',y+h+13);
+    s.setAttribute('fill','#7c95a4');s.setAttribute('font-size','10');s.setAttribute('text-anchor','middle');
+    s.textContent=sub;svg.appendChild(s);} return [x+w/2,y+h/2];
+}
+const SEGDOTS=[];
+function edge(svg,a,b,col,data){
+  const ln=document.createElementNS(NS,'line');
+  ln.setAttribute('x1',a[0]);ln.setAttribute('y1',a[1]);ln.setAttribute('x2',b[0]);ln.setAttribute('y2',b[1]);
+  ln.setAttribute('stroke',col);ln.setAttribute('stroke-width',data?1.4:3);
+  ln.setAttribute('stroke-opacity',data?0.5:0.35);
+  if(data)ln.setAttribute('stroke-dasharray','5 5');svg.appendChild(ln);
+  const dots=[];for(let i=0;i<(data?4:5);i++){const c=document.createElementNS(NS,'circle');
+    c.setAttribute('r',data?2.2:3.2);c.setAttribute('fill',col);svg.appendChild(c);dots.push({c,off:i/(data?4:5)});}
+  return {a,b,dots};
+}
+function buildSLD(){
+  const svg=document.getElementById('sld'); if(!svg)return; svg.innerHTML='';
+  node(svg,30,30,90,36,'Solar PV',Math.round(S.solar)+' kW','#f5a524');
+  node(svg,30,120,90,36,'Weather','sensor','#22d3ee');
+  node(svg,250,20,90,34,'LSTM','forecast','#22d3ee');
+  node(svg,420,20,90,34,'PPO','policy','#22d3ee');
+  node(svg,420,150,90,36,'Inverter','bus','#64748b');
+  node(svg,600,84,90,36,'BESS',Math.round(S.soc*100)+'%','#10b981');
+  node(svg,640,150,90,36,'Village',Math.round(S.load)+' kW','#3b82f6');
+  const e=[];
+  e.push(Object.assign(edge(svg,[120,48],[420,168],'#f5a524',false),{spd:0.25*Math.min(1,S.solar/(S.kwp*0.7))+0.04,on:S.solar>2,dir:1}));
+  e.push(Object.assign(edge(svg,[510,168],[640,168],'#3b82f6',false),{spd:0.25*Math.min(1,S.load/(S.kwp*0.2))+0.04,on:S.load>0.2,dir:1}));
+  e.push(Object.assign(edge(svg,[600,102],[510,168],'#10b981',false),{spd:0.3*Math.min(1,Math.abs(S.power)/(S.kwp*0.6))+0.03,on:Math.abs(S.power)>0.5,dir:S.power>=0?1:-1}));
+  e.push(Object.assign(edge(svg,[120,138],[250,40],'#22d3ee',true),{spd:0.18,on:true,dir:1}));
+  e.push(Object.assign(edge(svg,[340,37],[420,37],'#22d3ee',true),{spd:0.18,on:true,dir:1}));
+  e.push(Object.assign(edge(svg,[465,54],[600,96],'#22d3ee',true),{spd:0.18,on:true,dir:1}));
+  SEGDOTS.length=0; e.forEach(s=>SEGDOTS.push(s));
+}
+function animSLD(){
+  if(view==='dash'){const t=performance.now()/1000;
+    SEGDOTS.forEach(s=>{s.dots.forEach(d=>{
+      if(!s.on){d.c.setAttribute('opacity',0);return;} d.c.setAttribute('opacity',1);
+      let u=((t*s.spd*s.dir)+d.off)%1; if(u<0)u+=1;
+      d.c.setAttribute('cx',s.a[0]+(s.b[0]-s.a[0])*u);
+      d.c.setAttribute('cy',s.a[1]+(s.b[1]-s.a[1])*u);});});}
+  requestAnimationFrame(animSLD);
+}
+function drawChart(){
+  const cv=document.getElementById('chart'); if(!cv)return; const ctx=cv.getContext('2d');
+  const Wc=cv.width,Hc=cv.height,pL=38,pR=34,pT=12,pB=22,gw=Wc-pL-pR,gh=Hc-pT-pB;
+  ctx.clearRect(0,0,Wc,Hc);
+  let ymax=Math.max(S.maxP,1); for(let i=0;i<24;i++){[HIST.solar[i],HIST.load[i],Math.abs(HIST.power[i]||0)]
+     .forEach(v=>{if(v!=null)ymax=Math.max(ymax,v);});} ymax*=1.1;
+  const X=h=>pL+gw*h/24, Y=v=>pT+gh*(1-(v+ymax)/(2*ymax)), Yp=v=>pT+gh*(1-v/ymax);
+  ctx.strokeStyle='#1d2a36';ctx.lineWidth=1;
+  for(let g=0;g<=4;g++){const yy=pT+gh*g/4;ctx.beginPath();ctx.moveTo(pL,yy);ctx.lineTo(pL+gw,yy);ctx.stroke();}
+  ctx.fillStyle='#5b7081';ctx.font='10px monospace';
+  for(let hh2=0;hh2<=24;hh2+=6)ctx.fillText(String(hh2).padStart(2,'0'),X(hh2)-6,Hc-7);
+  function line(arr,col,proj){ctx.strokeStyle=col;ctx.lineWidth=2;ctx.beginPath();let st0=false;
+    for(let i=0;i<24;i++){if(arr[i]==null){st0=false;continue;}const xx=X(i),yy=proj(arr[i]);
+      if(!st0){ctx.moveTo(xx,yy);st0=true;}else ctx.lineTo(xx,yy);}ctx.stroke();}
+  ctx.strokeStyle='#33485a';ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(pL,Y(0));ctx.lineTo(pL+gw,Y(0));ctx.stroke();ctx.setLineDash([]);
+  line(HIST.solar,'#f5a524',Yp); line(HIST.load,'#3b82f6',Yp); line(HIST.power,'#10b981',Y);
+  ctx.strokeStyle='#a78bfa';ctx.lineWidth=1.5;ctx.setLineDash([4,3]);ctx.beginPath();let s0=false;
+  for(let i=0;i<24;i++){if(HIST.soc[i]==null){s0=false;continue;}const xx=X(i),yy=pT+gh*(1-(HIST.soc[i]/100));
+    if(!s0){ctx.moveTo(xx,yy);s0=true;}else ctx.lineTo(xx,yy);}ctx.stroke();ctx.setLineDash([]);
+  const nx=X(S.hour);ctx.strokeStyle='#cfe';ctx.globalAlpha=.5;ctx.beginPath();ctx.moveTo(nx,pT);ctx.lineTo(nx,pT+gh);ctx.stroke();ctx.globalAlpha=1;
+  ctx.setLineDash([4,4]);
+  ctx.strokeStyle='#f5a524';ctx.beginPath();ctx.moveTo(nx,Yp(S.solar));
+  for(let i=0;i<FC.solar.length;i++)ctx.lineTo(X(Math.min(24,S.hour+i+1)),Yp(FC.solar[i]));ctx.stroke();
+  ctx.strokeStyle='#3b82f6';ctx.beginPath();ctx.moveTo(nx,Yp(S.load));
+  for(let i=0;i<FC.load.length;i++)ctx.lineTo(X(Math.min(24,S.hour+i+1)),Yp(FC.load[i]));ctx.stroke();
+  ctx.setLineDash([]);
+}
+function fillDash(){
+  document.getElementById('kSoc').textContent=Math.round(S.soc*100)+'%';
+  document.getElementById('kSoh').textContent=(S.soh*100).toFixed(1)+'%';
+  document.getElementById('kSrv').textContent=S.served.toFixed(1)+'%';
+  document.getElementById('kLol').textContent=Math.round(S.lol)+' min';
+  document.getElementById('kEfc').textContent=S.efc.toFixed(2)+' EFC';
+  const p=S.power, lab=p>0.5?'⬆ Charge '+Math.round(p)+' kW':p<-0.5?'⬇ Discharge '+Math.round(-p)+' kW':'■ Hold';
+  document.getElementById('dAct').textContent=lab;
+  function setbar(id,v,col){const i=document.getElementById(id);const w=Math.abs(v)*50;
+    i.style.background=col;i.style.width=w+'%';i.style.left=(v>=0?50:50-w)+'%';}
+  setbar('bBase',S.base,'#64748b'); setbar('bRes',S.resid,'#22d3ee'); setbar('bAct',S.act,'#10b981');
+  document.getElementById('dInfo').innerHTML='GHI '+Math.round(S.ghi)+' W/m² · solar '+Math.round(S.solar)+
+     ' kW · load '+Math.round(S.load)+' kW'+(S.unmet>0.5?' · <span style="color:#ef4444">⚠ shed '+Math.round(S.unmet)+' kW</span>':'');
+  document.getElementById('log').innerHTML=(LOG.length?LOG.slice(-18).reverse():['—']).join('<br>');
+  buildSLD();
+}
+animSLD();
+
+/* ================= Streamlit component protocol (persistent iframe) ================= */
+function applyState(a){
+  S=a.S; HIST=a.HIST; FC=a.FC; LOG=a.LOG||[];
+  DAY.ghi=a.GHI24||DAY.ghi; DAY.month=a.month||DAY.month; DAY.dow=a.dow??DAY.dow;
+  tier.kwp=S.kwp; tier.kwh=S.kwh; tier.load=S.loaddes;
+  maxP=S.maxP; ready=S.ready;
+  T0=Date.now(); HOUR0=S.hour;              // resync the local real-time anchors
+  sim.soc=S.soc; sim.soh=S.soh;
+  const dot=document.getElementById('sdot');
+  if(dot){dot.style.background=S.running?'#10b981':'#64748b';
+          dot.style.boxShadow='0 0 9px '+(S.running?'#10b981':'#64748b');}
+  try{ fillDash(); }catch(e){}
+  if(view==='dash'){ try{ drawChart(); }catch(e){} }
+}
+function _post(m){ window.parent.postMessage(Object.assign({isStreamlitMessage:true},m),"*"); }
+window.addEventListener("message",(e)=>{
+  const d=e.data||{};
+  if(d.type==="streamlit:render"){ try{ applyState(d.args.state); }catch(err){ console.error(err); } }
+});
+_post({type:"streamlit:componentReady", apiVersion:1});
+_post({type:"streamlit:setFrameHeight", height:762});
+
+window.addEventListener('pagehide',()=>{_alive=false; try{renderer.dispose();}catch(e){}});
+window.addEventListener('beforeunload',()=>{_alive=false; try{renderer.dispose();}catch(e){}});
+</script>
+</body></html>

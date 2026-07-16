@@ -1,0 +1,6 @@
+data/
+.claude/
+desktop.ini
+__pycache__/
+models/assets/
+models/server.log

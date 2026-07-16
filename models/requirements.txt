@@ -1,0 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+fastapi
+uvicorn
+numpy
+torch
+stable-baselines3
+scikit-learn

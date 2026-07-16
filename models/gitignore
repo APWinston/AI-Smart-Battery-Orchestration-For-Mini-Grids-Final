@@ -1,0 +1,9 @@
+__pycache__/
+assets/
+*.mat
+matlab_export/
+srep_weights.json
+srep_twin_app.html
+app.py
+twin_component/
+server.log

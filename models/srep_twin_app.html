@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SREP · AI Battery EMS — 3D Twin + Live Dashboard (real LSTM + PPO)</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+
+  :root{
+    --bg:#07141b; --bg2:#0c2029; --bg3:#102b35; --line:#1d3f4b; --line2:#295463;
+    --ink:#e9f4f4; --muted:#7fa1aa; --faint:#52727c;
+    --solar:#ffb02e; --load:#ff6f61; --batt:#27d3c4; --good:#39d98a; --warn:#ffd166; --bad:#ff5470; --ai:#5ad1ff;
+    --disp:'Space Grotesk',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:
+      radial-gradient(1100px 560px at 82% -8%, rgba(39,211,196,.07), transparent 60%),
+      radial-gradient(800px 460px at 4% 108%, rgba(255,176,46,.05), transparent 55%), var(--bg);
+    color:var(--ink);font-family:var(--disp);font-size:14px;-webkit-font-smoothing:antialiased}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .wrap{max-width:1560px;margin:0 auto;padding:14px 18px 30px}
+
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:12px 16px;
+    background:linear-gradient(180deg,var(--bg2),rgba(12,32,41,.6));border:1px solid var(--line);border-radius:13px;position:relative;overflow:hidden}
+  header::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--batt)}
+  .brand{display:flex;align-items:center;gap:12px;padding-left:6px}
+  .mk{width:36px;height:36px;border-radius:9px;background:radial-gradient(circle at 30% 25%,#2af0de,#0e8c84);display:grid;place-items:center;box-shadow:0 0 18px rgba(39,211,196,.35)}
+  .mk svg{width:20px;height:20px}
+  .brand h1{font-size:15px;font-weight:600}
+  .brand .s{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase}
+  header .sp{flex:1}
+  .chip{display:flex;align-items:center;gap:7px;padding:6px 11px;border:1px solid var(--line);border-radius:999px;font-size:11px;color:var(--muted);background:var(--bg3)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .chip.ok .dot{background:var(--good);box-shadow:0 0 8px var(--good)} .chip.warn .dot{background:var(--warn)} .chip.err .dot{background:var(--bad)} .chip.ai .dot{background:var(--ai);box-shadow:0 0 8px var(--ai)}
+  .clock{text-align:right;font-family:var(--mono)} .clock .t{font-size:23px;font-weight:600} .clock .d{font-size:10px;color:var(--muted)}
+
+  .controls{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  .fld{display:flex;align-items:center;gap:7px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:6px 9px}
+  .fld label{font-size:9px;letter-spacing:.5px;text-transform:uppercase;color:var(--faint)}
+  select,input{background:transparent;color:var(--ink);border:none;font-family:var(--disp);font-size:13px;font-weight:500;outline:none}
+  input[type=number]{width:62px} select option{background:var(--bg2)}
+  button{font-family:var(--disp);background:var(--bg3);border:1px solid var(--line2);color:var(--ink);border-radius:10px;padding:8px 13px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s}
+  button:hover{border-color:var(--batt)}
+  button.primary{background:var(--batt);color:#04211e;border-color:transparent}
+  button.ai{background:var(--ai);color:#04222e;border-color:transparent}
+  .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .seg button{border:none;border-radius:0}
+  .seg button.on{background:var(--solar);color:#1a1205}
+  input[type=range]{accent-color:var(--batt);width:96px}
+
+  .grid{display:grid;grid-template-columns:1.65fr 1fr;gap:14px}
+  .col{display:flex;flex-direction:column;gap:14px}
+  .card{background:linear-gradient(180deg,var(--bg2),var(--bg));border:1px solid var(--line);border-radius:13px;padding:14px 16px}
+  .card h2{font-size:12px;font-weight:600;letter-spacing:.4px;display:flex;align-items:center;gap:8px;margin-bottom:3px}
+  .card h2 .tag{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint)}
+  .eyebrow{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--faint)}
+  canvas#flow{width:100%;height:262px;display:block;margin-top:8px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:6px;font-size:10.5px;color:var(--muted)}
+  .legend i{width:13px;height:3px;border-radius:2px;display:inline-block;margin-right:5px;vertical-align:middle}
+  .legend i.dash{background:repeating-linear-gradient(90deg,currentColor 0 4px,transparent 4px 7px);height:2px}
+
+  .sld svg{width:100%;height:200px;display:block}
+  .flowline{stroke-width:3;fill:none;stroke-linecap:round}
+  .flowdash{stroke-width:3;fill:none;stroke-linecap:round;stroke-dasharray:2 12}
+  .nl{font-family:var(--mono);font-size:10px;fill:var(--muted)} .nv{font-family:var(--mono);font-size:12px;font-weight:700}
+  .node{fill:var(--bg3);stroke:var(--line2);stroke-width:1.4}
+
+  .batt-row{display:flex;gap:16px;align-items:center;margin-top:4px}
+  .cell{width:84px;height:128px;border:2px solid var(--line2);border-radius:9px;position:relative;background:var(--bg);overflow:hidden;flex:none}
+  .cell::before{content:"";position:absolute;top:-6px;left:50%;transform:translateX(-50%);width:30px;height:6px;background:var(--line2);border-radius:3px 3px 0 0}
+  .cell .fill{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(180deg,var(--batt),#0f9e92);transition:height .4s}
+  .cell .soc{position:absolute;inset:0;display:grid;place-items:center;font-family:var(--mono);font-size:21px;font-weight:700;text-shadow:0 1px 6px #000}
+  .meta{flex:1;display:flex;flex-direction:column;gap:9px}
+  .mrow{display:flex;justify-content:space-between;border-bottom:1px dashed var(--line);padding-bottom:6px;font-size:12px}
+  .mrow .k{color:var(--muted)} .mrow .v{font-family:var(--mono);font-weight:600}
+
+  .ai-card{border-color:var(--line2);position:relative}
+  .ai-card::before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--ai);border-radius:13px 0 0 13px}
+  .action{font-size:20px;font-weight:600;margin:7px 0 3px}
+  .why{font-size:12px;color:var(--muted);min-height:34px}
+  .resid{display:flex;gap:8px;margin-top:10px}
+  .resid .b{flex:1;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 9px}
+  .resid .b .k{font-size:9px;letter-spacing:.5px;text-transform:uppercase;color:var(--faint)}
+  .resid .b .v{font-family:var(--mono);font-size:15px;font-weight:600;margin-top:2px}
+  .resid .ar{align-self:center;color:var(--faint)}
+
+  .fc-row{display:flex;gap:14px;margin-top:6px;font-size:13px} .fc-row b{font-family:var(--mono)}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
+  .kpi{background:var(--bg2);border:1px solid var(--line);border-radius:11px;padding:11px 12px}
+  .kpi .k{font-size:9px;letter-spacing:.6px;text-transform:uppercase;color:var(--faint)}
+  .kpi .v{font-family:var(--mono);font-size:23px;font-weight:700;margin-top:4px}
+  .kpi .v small{font-size:11px;color:var(--muted);font-weight:400}
+  .log{height:120px;overflow:hidden;display:flex;flex-direction:column-reverse;margin-top:5px;mask-image:linear-gradient(180deg,transparent,#000 20%)}
+  .ev{display:flex;gap:9px;padding:4px 2px;border-bottom:1px solid rgba(29,63,75,.5);font-size:12px;animation:sl .3s ease}
+  @keyframes sl{from{opacity:0;transform:translateY(-4px)}to{opacity:1}}
+  .ev .ts{font-family:var(--mono);color:var(--faint);font-size:11px;width:42px;flex:none}
+
+  #alarm{position:fixed;inset:0;z-index:50;pointer-events:none;opacity:0;box-shadow:inset 0 0 130px 34px rgba(255,40,70,.5)}
+  #alarm.on{animation:fl 1s infinite} @keyframes fl{0%,100%{opacity:0}50%{opacity:1}}
+  #atag{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:51;background:rgba(255,40,70,.92);color:#fff;font-weight:700;letter-spacing:.08em;padding:8px 18px;border-radius:9px;font-size:13px;display:none}
+  #atag.on{display:block;animation:fl 1s infinite}
+  @media(max-width:1080px){.grid{grid-template-columns:1fr}}
+
+  /* ---- combined app: top bar + view switching + 3D ---- */
+  #scene{position:fixed;inset:0;width:100vw;height:100vh;display:block;z-index:1;background:#0a1016}
+  #labels{position:fixed;inset:0;z-index:2;pointer-events:none}
+  .lab3d{position:absolute;transform:translate(-50%,-100%);margin-top:-8px;background:rgba(8,20,27,.82);
+    border:1px solid var(--line);border-radius:7px;padding:4px 9px 5px;white-space:nowrap;backdrop-filter:blur(4px);box-shadow:0 4px 14px rgba(0,0,0,.45)}
+  .lab3d b{font-weight:600;font-size:11px;display:block;color:var(--ink)} .lab3d span{font-size:9.5px;color:var(--muted);font-family:var(--mono)}
+  .lab3d::after{content:'';position:absolute;left:50%;bottom:-12px;width:1px;height:8px;background:var(--line2)}
+  .lab3d::before{content:'';position:absolute;left:50%;bottom:-16px;width:7px;height:7px;margin-left:-3.5px;border-radius:50%;background:var(--batt);box-shadow:0 0 8px var(--batt)}
+  #topbar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:10px 16px;background:linear-gradient(180deg,rgba(7,20,27,.96),rgba(7,20,27,.78));backdrop-filter:blur(9px);border-bottom:1px solid var(--line)}
+  #topbar .sp{flex:1}
+  .viewseg{display:flex;border:1px solid var(--line2);border-radius:10px;overflow:hidden}
+  .viewseg button{border:none;border-radius:0;padding:8px 14px;background:var(--bg3)}
+  .viewseg button.on{background:var(--batt);color:#04211e}
+  #view3d{position:fixed;inset:0;z-index:1}
+  #d3hud{position:fixed;left:18px;bottom:18px;z-index:6;background:rgba(8,20,27,.82);border:1px solid var(--line);
+    border-radius:12px;padding:12px 15px;backdrop-filter:blur(8px);min-width:210px}
+  #d3hud .l{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:var(--faint)}
+  #d3hud #d3dec{font-size:17px;font-weight:600;margin:3px 0 6px}
+  #d3hud #d3stat{font-size:12px;font-weight:600;color:var(--good)}
+  #toDash{position:fixed;right:18px;bottom:18px;z-index:6;background:var(--batt);color:#04211e;border:none;
+    border-radius:12px;padding:13px 20px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 10px 30px rgba(39,211,196,.35)}
+  #toDash:hover{filter:brightness(1.07)}
+  #viewDash{position:relative;z-index:20;max-width:1560px;margin:0 auto;padding:120px 18px 36px;
+    background:radial-gradient(1100px 560px at 82% 4%, rgba(39,211,196,.06), transparent 60%), var(--bg);min-height:100vh}
+  #backTo3d{margin-bottom:12px}
+  @media(max-width:1080px){#viewDash{padding-top:160px}}
+
+</style>
+</head>
+<body>
+<div id="alarm"></div><div id="atag">⚠ LOAD NOT MET — SHORTFALL</div>
+
+<div id="topbar">
+  <div class="brand"><div class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="#04211e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg></div>
+    <div><h1>SREP · AI Battery EMS</h1><div class="s" id="locline">Live digital twin</div></div></div>
+  <div class="viewseg" id="viewseg"><button id="to3d" class="on">3D Environment</button><button id="toDashTab">Dashboard</button></div>
+  <button id="play" class="primary">❚❚ Pause</button>
+  <div class="fld"><span class="eyebrow">Speed</span><input type="range" id="speed" min="0.3" max="6" step="0.1" value="2"></div>
+  <div class="seg" id="tier"><button data-t="50">50</button><button data-t="75" class="on">75</button><button data-t="120">120 kWp</button></div>
+  <div class="fld"><label>Town</label><select id="town"><option value="6.30,0.05">Akosombo</option><option value="9.40,-0.84">Tamale</option><option value="6.69,-1.62">Kumasi</option><option value="4.87,-2.24">Axim</option><option value="10.79,-0.85">Bolgatanga</option><option value="5.56,-0.20">Accra</option></select></div>
+  <div class="fld"><label>Lat</label><input id="lat" type="number" step="0.01" value="6.30"></div>
+  <div class="fld"><label>Lon</label><input id="lon" type="number" step="0.01" value="0.05"></div>
+  <button id="loadWx" class="ai">📡 Live weather</button>
+  <button id="loadModel">🧠 Load model</button>
+  <input type="file" id="modelFile" accept=".json" style="display:none">
+  <button id="mute">🔔</button>
+  <div class="sp"></div>
+  <div class="chip ai" id="modelChip"><span class="dot"></span><span id="modelTxt">Baseline only — load model</span></div>
+  <div class="chip" id="wxChip"><span class="dot"></span><span id="wxTxt">No weather</span></div>
+  <div class="clock"><div class="t mono" id="clock">06:00</div><div class="d" id="phase">—</div></div>
+</div>
+
+<div id="view3d">
+  <canvas id="scene"></canvas>
+  <div id="labels"></div>
+  <div id="d3hud"><div class="l">PPO agent decision</div><div id="d3dec">Initialising…</div><div id="d3stat">—</div></div>
+  <button id="toDash">Operator Dashboard →</button>
+</div>
+<div id="viewDash" style="display:none">
+<button id="backTo3d">← 3D Environment</button>
+<div class="grid">
+    <div class="col">
+      <div class="card">
+        <h2>Power flow &amp; forecast <span class="tag" id="chartTag">kW · 24 h</span></h2>
+        <div class="eyebrow">Measured to <span class="mono" id="nowlbl">06:00</span> · LSTM forecast 3 h ahead (dashed)</div>
+        <canvas id="flow"></canvas>
+        <div class="legend"><span><i style="background:var(--solar)"></i>Solar</span><span><i style="background:var(--load)"></i>Load</span><span><i style="background:var(--batt)"></i>Battery (+charge/−discharge)</span><span style="color:var(--muted)"><i class="dash"></i>Forecast</span><span><i style="background:var(--bad)"></i>Unserved</span></div>
+      </div>
+      <div class="card">
+        <h2>Plant schematic · sensors → LSTM → PPO → battery <span class="tag">data + power flow</span></h2>
+        <div class="sld"><svg viewBox="0 0 760 210" preserveAspectRatio="xMidYMid meet">
+          <!-- static guide paths -->
+          <path class="flowline" d="M150 52 H346" stroke="#1d3f4b"/>
+          <path class="flowline" d="M414 68 C414 132 350 152 314 178" stroke="#1d3f4b"/>
+          <path class="flowline" d="M128 135 H300" stroke="#26424d"/>
+          <path class="flowline" d="M300 135 H612" stroke="#26424d"/>
+          <path class="flowline" d="M300 135 V176" stroke="#26424d"/>
+          <!-- animated flows -->
+          <path id="fSense" class="flowdash" d="M150 52 H346" stroke="var(--ai)"/>
+          <path id="fCtrl"  class="flowdash" d="M414 68 C414 132 350 152 314 178" stroke="var(--ai)"/>
+          <path id="fPV"    class="flowdash" d="M128 135 H300" stroke="var(--solar)"/>
+          <path id="fLoad"  class="flowdash" d="M300 135 H612" stroke="var(--load)"/>
+          <path id="fBatt"  class="flowdash" d="M300 135 V176" stroke="var(--batt)"/>
+          <!-- WEATHER SENSORS -->
+          <g><rect class="node" x="74" y="32" width="72" height="42" rx="8"/>
+            <line x1="110" y1="70" x2="110" y2="42" stroke="var(--muted)" stroke-width="2"/>
+            <circle id="pyra" cx="110" cy="42" r="5" fill="var(--solar)"/>
+            <line x1="100" y1="48" x2="124" y2="48" stroke="var(--muted)" stroke-width="1.4"/>
+            <text class="nl" x="110" y="26" text-anchor="middle">WEATHER SENSORS</text>
+            <text id="ghiV" class="nv" x="110" y="90" text-anchor="middle" fill="var(--solar)">0 W/m²</text></g>
+          <!-- AI EMS -->
+          <g><rect class="node" x="346" y="30" width="80" height="40" rx="7" style="stroke:var(--ai)"/>
+            <rect x="372" y="40" width="28" height="20" rx="3" fill="none" stroke="var(--ai)" stroke-width="1.4"/>
+            <line x1="386" y1="34" x2="386" y2="40" stroke="var(--ai)"/><line x1="386" y1="60" x2="386" y2="66" stroke="var(--ai)"/>
+            <line x1="366" y1="50" x2="372" y2="50" stroke="var(--ai)"/><line x1="400" y1="50" x2="406" y2="50" stroke="var(--ai)"/>
+            <text class="nl" x="386" y="24" text-anchor="middle">AI EMS · LSTM+PPO</text>
+            <text id="aiV" class="nv" x="386" y="86" text-anchor="middle" fill="var(--ai)" font-size="10">baseline</text></g>
+          <!-- SOLAR PV -->
+          <g><rect class="node" x="54" y="116" width="72" height="40" rx="7"/>
+            <g stroke="var(--solar)" stroke-width="1.2" opacity=".9" fill="none">
+              <rect x="70" y="124" width="40" height="24" rx="2"/><line x1="83" y1="124" x2="83" y2="148"/><line x1="97" y1="124" x2="97" y2="148"/><line x1="70" y1="136" x2="110" y2="136"/></g>
+            <text class="nl" x="90" y="110" text-anchor="middle">SOLAR PV</text>
+            <text id="pvV" class="nv" x="90" y="172" text-anchor="middle" fill="var(--solar)">0 kW</text></g>
+          <!-- DC BUS -->
+          <line x1="300" y1="112" x2="300" y2="158" stroke="var(--line2)" stroke-width="4"/>
+          <text class="nl" x="300" y="106" text-anchor="middle">DC BUS</text>
+          <!-- BATTERY -->
+          <g><rect class="node" x="258" y="176" width="84" height="26" rx="5"/>
+            <rect x="266" y="182" width="44" height="14" rx="2" fill="none" stroke="var(--batt)" stroke-width="1.3"/>
+            <rect id="bGlyph" x="266" y="182" width="22" height="14" rx="2" fill="var(--batt)" opacity=".85"/>
+            <line x1="312" y1="186" x2="312" y2="192" stroke="var(--batt)" stroke-width="2"/>
+            <text class="nl" x="284" y="172" text-anchor="middle">BATTERY</text>
+            <text id="bV" class="nv" x="350" y="194" fill="var(--batt)" font-size="11">idle</text></g>
+          <!-- VILLAGE -->
+          <g><path class="node" d="M612 116 h64 v40 h-64 z"/>
+            <g fill="none" stroke="var(--load)" stroke-width="1.3"><path d="M624 150 v-12 l8 -7 l8 7 v12"/><path d="M648 150 v-10 l7 -6 l7 6 v10"/></g>
+            <text class="nl" x="644" y="110" text-anchor="middle">VILLAGE LOAD</text>
+            <text id="lV" class="nv" x="644" y="172" text-anchor="middle" fill="var(--load)">0 kW</text></g>
+        </svg></div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="card ai-card">
+        <h2>PPO dispatch decision <span class="tag" id="polTag">residual</span></h2>
+        <div class="action" id="action">Initialising…</div>
+        <div class="why mono" id="why">Load a model to enable the trained policy.</div>
+        <div class="resid"><div class="b"><div class="k">Baseline</div><div class="v mono" id="base">0</div></div><div class="ar">+</div><div class="b"><div class="k">PPO correction</div><div class="v mono" id="resid" style="color:var(--ai)">0</div></div><div class="ar">=</div><div class="b"><div class="k">Action</div><div class="v mono" id="final">0</div></div></div>
+      </div>
+      <div class="card"><h2>Battery <span class="tag" id="packTag">237 kWh</span></h2>
+        <div class="batt-row"><div class="cell"><div class="fill" id="socFill" style="height:55%"></div><div class="soc mono" id="socTxt">55%</div></div>
+          <div class="meta"><div class="mrow"><span class="k">State of health</span><span class="v" id="soh">100.0%</span></div><div class="mrow"><span class="k">Reserve floor</span><span class="v">10%</span></div><div class="mrow"><span class="k">Throughput today</span><span class="v" id="efc">0.00 EFC</span></div><div class="mrow"><span class="k">Round-trip η</span><span class="v">95%</span></div></div></div>
+        <div class="fc-row"><span class="eyebrow">LSTM forecast 3 h:</span><span>☀ <b id="fcS">—</b> kW</span><span>⚡ <b id="fcL">—</b> kW</span></div>
+      </div>
+      <div class="kpis"><div class="kpi"><div class="k">Energy served</div><div class="v"><span id="kServed">100</span><small>%</small></div></div><div class="kpi"><div class="k">Loss of load</div><div class="v"><span id="kLol">0</span><small> min</small></div></div><div class="kpi"><div class="k">Solar used</div><div class="v"><span id="kSolar">0</span><small> kWh</small></div></div></div>
+      <div class="card"><h2>Operations log <span class="tag">today</span></h2><div class="log" id="log"></div></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+
+/* ---- constants (overridden by loaded weights where present) ---- */
+const C = { residual_scale:0.25, pv_derating:0.75, soc_min:0.10, soc_max:0.95, eta:0.95,
+  max_solar_kwp:120, max_bat_kwh:400, max_load_kw:20, obs_hourly:24, vn_clip:10, vn_eps:1e-8 };
+const TIERS = {50:{kwp:50,kwh:160,load:5.6},75:{kwp:75,kwh:237,load:8.4},120:{kwp:120,kwh:378,load:13.4}};
+const LOAD_SHAPE=[.45,.40,.38,.38,.42,.55,.85,1.05,.95,.82,.78,.80,.82,.80,.78,.82,.95,1.35,1.95,2.20,2.05,1.55,.95,.60];
+const $=id=>document.getElementById(id);
+let W=null, ready=false;                 // loaded weights
+let tier=TIERS[75], maxP=Math.min(.5*237,.8*75);
+const sim={hour:6,soc:.55,soh:1,playing:true,speed:2,muted:false,lastBeep:0};
+let DAY=null, lastFC={solar:[0],load:[0]}, lastEv='';
+
+/* ===================== real network math (pure JS) ===================== */
+const sigm=x=>1/(1+Math.exp(-x)), clip=(v,a,b)=>v<a?a:v>b?b:v, clip01=v=>v<0?0:v>1?1:v;
+function matVec(M,x){const r=new Array(M.length);for(let i=0;i<M.length;i++){const row=M[i];let s=0;for(let j=0;j<row.length;j++)s+=row[j]*x[j];r[i]=s;}return r;}
+function lstmCell(g,cprev,H){const h=new Array(H),c=new Array(H);for(let n=0;n<H;n++){const i=sigm(g[n]),f=sigm(g[H+n]),gg=Math.tanh(g[2*H+n]),o=sigm(g[3*H+n]);c[n]=f*cprev[n]+i*gg;h[n]=o*Math.tanh(c[n]);}return[h,c];}
+function lstmForward(win){
+  const H=W.hidden|0; let h0=new Array(H).fill(0),c0=new Array(H).fill(0),h1=new Array(H).fill(0),c1=new Array(H).fill(0);
+  for(let t=0;t<win.length;t++){
+    const x=win[t].map((v,j)=>v*W.sx_scale[j]+W.sx_min[j]);
+    const a0=matVec(W.lstm_Wih0,x),b0=matVec(W.lstm_Whh0,h0);
+    const g0=a0.map((v,i)=>v+W.lstm_bih0[i]+b0[i]+W.lstm_bhh0[i]); [h0,c0]=lstmCell(g0,c0,H);
+    const a1=matVec(W.lstm_Wih1,h0),b1=matVec(W.lstm_Whh1,h1);
+    const g1=a1.map((v,i)=>v+W.lstm_bih1[i]+b1[i]+W.lstm_bhh1[i]); [h1,c1]=lstmCell(g1,c1,H);
+  }
+  const out=matVec(W.fc_W,h1).map((v,i)=>v+W.fc_b[i]);
+  const solar=[],load=[]; for(let k=0;k<48;k++){solar.push(clip01(out[2*k]));load.push(clip01(out[2*k+1]));}
+  return {solar,load};
+}
+function ppoAction(obs){
+  const on=obs.map((v,j)=>clip((v-W.vn_mean[j])/Math.sqrt(W.vn_var[j]+C.vn_eps),-C.vn_clip,C.vn_clip));
+  let h=matVec(W.pi_W0,on).map((v,i)=>Math.tanh(v+W.pi_b0[i]));
+  h=matVec(W.pi_W1,h).map((v,i)=>Math.tanh(v+W.pi_b1[i]));
+  let a=0; for(let j=0;j<h.length;j++)a+=W.act_W[0][j]*h[j]; a+=W.act_b[0];
+  return clip(a,-1,1);
+}
+function buildObs(fc,hour,month,baseAct){
+  const h2=C.obs_hourly|0, d2s=mean(fc.solar.slice(h2)), d2l=mean(fc.load.slice(h2));
+  return [sim.soc,sim.soh,Math.sin(2*Math.PI*hour/24),Math.cos(2*Math.PI*hour/24),
+    Math.sin(2*Math.PI*month/12),Math.cos(2*Math.PI*month/12),
+    ...fc.solar.slice(0,h2),...fc.load.slice(0,h2),d2s,d2l,
+    tier.kwp/C.max_solar_kwp,tier.kwh/C.max_bat_kwh,tier.load/C.max_load_kw,baseAct];
+}
+const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+
+/* ===================== weather (sensors) ===================== */
+async function loadWeather(lat,lon,name){
+  setChip('wxChip','wxTxt','Fetching weather…','warn');
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=shortwave_radiation,temperature_2m,precipitation&past_days=1&forecast_days=1&timezone=auto`;
+  try{
+    const r=await fetch(url); if(!r.ok)throw 0; const j=await r.json(); const h=j.hourly;
+    const off=j.utc_offset_seconds||0, nowLoc=new Date(Date.now()+off*1000);     // location wall-clock
+    const todayStr=nowLoc.toISOString().slice(0,10);
+    let s=h.time.findIndex(t=>t.slice(0,10)===todayStr);                         // today's midnight index
+    if(s<0||s+24>h.shortwave_radiation.length) s=0;
+    DAY={ghi:h.shortwave_radiation.slice(s,s+24).map(v=>v||0),temp:h.temperature_2m.slice(s,s+24),
+      ppt:h.precipitation.slice(s,s+24).map(v=>v||0),month:nowLoc.getUTCMonth()+1,dow:(nowLoc.getUTCDay()+6)%7,date:todayStr};
+    const curHour=(nowLoc.getUTCHours()+nowLoc.getUTCMinutes()/60)%24;
+    warmStart(curHour);                                                          // play today up to now, resume live
+    const hhmmLoc=`${String(nowLoc.getUTCHours()).padStart(2,'0')}:${String(nowLoc.getUTCMinutes()).padStart(2,'0')}`;
+    $('locline').textContent=`${name} · ${(+lat).toFixed(2)}, ${(+lon).toFixed(2)} · ${DAY.date} · local time ${hhmmLoc}`;
+    setChip('wxChip','wxTxt','Live · '+DAY.date+' · '+hhmmLoc,'ok');
+  }catch(e){ DAY=synthDay(); const d=new Date(); warmStart((d.getHours()+d.getMinutes()/60)%24);
+    setChip('wxChip','wxTxt','Live unavailable — modeled','err');
+    $('locline').textContent=`${name} · modeled day`; }
+}
+function synthDay(){const t=[...Array(24).keys()];
+  return {ghi:t.map(h=>{const d=Math.max(0,Math.sin(Math.PI*(h-6)/12));return 1050*Math.pow(d,1.15)*(0.8+0.2*Math.sin(0.7*h));}),
+    temp:t.map(h=>26+6*Math.sin(Math.PI*(h-9)/12)),ppt:t.map(()=>0),month:6,dow:3,date:'modeled'};}
+function dayVal(arr,h){const i=Math.floor(h)%24,j=(i+1)%24,f=h-Math.floor(h);return arr[i]*(1-f)+arr[j]*f;}
+function loadKW(h){const i=Math.floor(h)%24,j=(i+1)%24,f=h-Math.floor(h);return tier.load*(LOAD_SHAPE[i]*(1-f)+LOAD_SHAPE[j]*f);}
+function window24(k){const win=[];for(let n=0;n<24;n++){const idx=((k-24+n)%24+24)%24;
+  win.push([DAY.ghi[idx],DAY.ppt[idx],DAY.temp[idx],tier.load*LOAD_SHAPE[idx],idx,DAY.month,DAY.dow]);}return win;}
+
+/* ===================== dispatch + battery ===================== */
+function step(dt){
+  const h=sim.hour, ghi=dayVal(DAY.ghi,h), solar=(ghi/1000)*tier.kwp*C.pv_derating, load=loadKW(h);
+  let fc;
+  if(ready){ fc=lstmForward(window24(Math.floor(h)+1)); }
+  else { fc={solar:[],load:[]}; for(let kk=0;kk<48;kk++){const hh=(Math.floor(h)+1+kk)%24;
+           fc.solar.push((dayVal(DAY.ghi,hh)/1000)); fc.load.push(loadKW(hh)/Math.max(tier.load*2.2,1));} }
+  lastFC=fc;
+  const baseAct=clip((solar-load)/maxP,-1,1);
+  let a=0; if(ready){ a=ppoAction(buildObs(fc,h,DAY.month,baseAct)); }
+  const act=clip(baseAct+C.residual_scale*a,-1,1);
+  let power=act*maxP;                          // + charge, - discharge
+  const cap=tier.kwh*sim.soh, stored=sim.soc*cap;
+  if(power>=0){const maxch=(C.soc_max-sim.soc)*cap/C.eta/Math.max(dt,1e-3);power=Math.min(power,maxch);}
+  else{const maxdis=(sim.soc-C.soc_min)*cap*C.eta/Math.max(dt,1e-3);power=Math.max(power,-maxdis);}
+  const supply=solar+Math.max(0,-power), demand=load+Math.max(0,power);
+  const unmet=supply>=demand?0:Math.min(demand-supply,load);
+  const ac=Math.max(0,power),ad=Math.max(0,-power);
+  sim.soc=clip((stored+(ac*C.eta-ad/C.eta)*dt)/cap,C.soc_min,C.soc_max);
+  sim.soh=Math.max(.80,sim.soh-(ac+ad)*dt*2e-7);
+  return {ghi,solar,load,power,baseAct,a,act,unmet,served:load-unmet,fc};
+}
+
+/* ===================== rendering ===================== */
+const cv=$('flow'),ctx=cv.getContext('2d');
+function fit(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=r.width*d;cv.height=r.height*d;ctx.setTransform(d,0,0,d,0,0);}
+addEventListener('resize',fit);
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+let H_solar=[],H_load=[],H_batt=[],H_unmet=[];
+function pushHist(k,st){H_solar[k]=st.solar;H_load[k]=st.load;H_batt[k]=st.power;H_unmet[k]=st.unmet;}
+function drawChart(k,fc){
+  const r=cv.getBoundingClientRect(),Wd=r.width,Ht=r.height;ctx.clearRect(0,0,Wd,Ht);
+  const pL=40,pR=10,pT=10,pB=22,gw=Wd-pL-pR,gh=Ht-pT-pB;
+  let ymax=tier.kwp*0.9; for(let i=0;i<=k;i++)ymax=Math.max(ymax,H_solar[i]||0,H_load[i]||0); ymax*=1.1;
+  const ymin=-maxP*1.05,span=ymax-ymin,X=h=>pL+gw*(h/24),Y=v=>pT+gh*(1-(v-ymin)/span);
+  ctx.strokeStyle=css('--line');ctx.fillStyle=css('--faint');ctx.font='10px IBM Plex Mono';ctx.textBaseline='middle';
+  for(let hh=0;hh<=24;hh+=6){const x=pL+gw*hh/24;ctx.globalAlpha=.5;ctx.beginPath();ctx.moveTo(x,pT);ctx.lineTo(x,pT+gh);ctx.stroke();ctx.globalAlpha=1;ctx.textAlign='center';ctx.fillText(String(hh).padStart(2,'0'),x,pT+gh+11);}
+  ctx.strokeStyle=css('--line2');ctx.beginPath();ctx.moveTo(pL,Y(0));ctx.lineTo(pL+gw,Y(0));ctx.stroke();
+  ctx.textAlign='right';ctx.fillText('0',pL-5,Y(0));ctx.fillText(Math.round(ymax)+'',pL-5,Y(ymax*0.93));
+  const ahead=3,kf=Math.min(24,sim.hour+ahead);
+  ctx.fillStyle='rgba(127,161,170,.06)';ctx.fillRect(X(sim.hour),pT,X(kf)-X(sim.hour),gh);
+  const line=(arr,col,n,dash,w)=>{ctx.beginPath();ctx.lineWidth=w||2;ctx.strokeStyle=col;ctx.setLineDash(dash||[]);for(let i=0;i<=n;i++){const x=X(i),y=Y(arr[i]);i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();ctx.setLineDash([]);};
+  if(k>0){line(H_solar,css('--solar'),k);line(H_batt,css('--batt'),k,[],2.2);line(H_load,css('--load'),k,[],2.3);}
+  ctx.fillStyle=css('--bad');for(let i=0;i<=k;i++)if(H_unmet[i]>0.5){ctx.beginPath();ctx.arc(X(i),Y(H_load[i]),2.4,0,7);ctx.fill();}
+  // forecast dashed ahead (denormalised solar/load)
+  ctx.setLineDash([3,4]);ctx.lineWidth=1.5;
+  ctx.strokeStyle=css('--solar');ctx.beginPath();for(let kk=0;kk<ahead;kk++){const hh=sim.hour+kk;const sv=fc.solar[kk]!=null?deNormSolar(fc.solar[kk]):0;const x=X(hh),y=Y(sv);kk?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();
+  ctx.strokeStyle=css('--load');ctx.beginPath();for(let kk=0;kk<ahead;kk++){const hh=sim.hour+kk;const lv=fc.load[kk]!=null?deNormLoad(fc.load[kk]):0;const x=X(hh),y=Y(lv);kk?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();ctx.setLineDash([]);
+  ctx.strokeStyle=css('--ink');ctx.globalAlpha=.85;ctx.setLineDash([2,3]);ctx.beginPath();ctx.moveTo(X(sim.hour),pT);ctx.lineTo(X(sim.hour),pT+gh);ctx.stroke();ctx.setLineDash([]);ctx.globalAlpha=1;
+}
+// forecast values are normalised (scaler_y space) when real LSTM; de-normalise for display
+function deNormSolar(v){ if(ready&&W.sy_scale) return Math.max(0,(v-W.sy_min[0])/W.sy_scale[0]/1000*tier.kwp*C.pv_derating); return v*tier.kwp*C.pv_derating; }
+function deNormLoad(v){ if(ready&&W.sy_scale) return Math.max(0,(v-W.sy_min[1])/W.sy_scale[1]); return v*Math.max(tier.load*2.2,1); }
+
+let phase=0;
+function drawSLD(st){
+  phase-=2+Math.min(8,(Math.abs(st.power)+st.solar)/8);
+  const set=(id,on,rev)=>{const e=$(id);if(!e)return;e.style.opacity=on?1:.1;e.style.strokeDashoffset=(rev?-phase:phase);};
+  set('fSense',true,false);                                   // sensors -> AI (always streaming)
+  set('fCtrl',ready,false);                                   // AI -> battery control signal
+  set('fPV',st.solar>0.5,false);
+  set('fLoad',st.served>0.5,false);
+  if(st.power>0.5)set('fBatt',true,false); else if(st.power<-0.5)set('fBatt',true,true); else $('fBatt').style.opacity=.1;
+  $('ghiV').textContent=Math.round(st.ghi)+' W/m²';
+  $('pvV').textContent=Math.round(st.solar)+' kW';
+  $('lV').textContent=Math.round(st.load)+' kW';
+  $('bV').textContent=st.power>0.5?`▲ ${Math.round(st.power)} kW`:st.power<-0.5?`▼ ${Math.round(-st.power)} kW`:'idle';
+  $('aiV').textContent=ready?(st.power>0.5?'charge':st.power<-0.5?'discharge':'hold'):'baseline';
+  const pg=$('pyra'); if(pg)pg.setAttribute('r',(4+3*Math.min(1,st.ghi/1000)).toFixed(1));
+  const bg=$('bGlyph'); if(bg){const f=(sim.soc-C.soc_min)/(C.soc_max-C.soc_min);
+    bg.setAttribute('width',(6+38*Math.max(0,Math.min(1,f))).toFixed(1));
+    bg.setAttribute('fill',sim.soc<.2?'var(--bad)':sim.soc<.4?'var(--warn)':'var(--batt)');}
+}
+let efcThru=0,servedE=0,loadE=0,solarUsed=0,lolMin=0;
+function warmStart(curHour){
+  // Replay today from 00:00 up to the current local hour so the dashboard
+  // opens with today's measured curve and a realistic battery state, then live-runs from now.
+  H_solar=[];H_load=[];H_batt=[];H_unmet=[];
+  efcThru=servedE=loadE=solarUsed=lolMin=0;
+  sim.soc=.55; sim.soh=1;
+  const N=Math.max(0,Math.floor(curHour));
+  for(let hh=0;hh<N;hh++){
+    sim.hour=hh;
+    const st=step(1);                                  // 1-hour battery integration
+    pushHist(hh,st);
+    efcThru+=Math.abs(st.power); servedE+=st.served; loadE+=st.load;
+    solarUsed+=Math.min(st.solar,st.load+Math.max(0,-st.power)); if(st.unmet>0.5)lolMin+=60;
+  }
+  sim.hour=curHour;                                    // resume live at the real local time
+}
+function pushLog(ts,msg){if(msg===lastEv)return;lastEv=msg;const l=$('log');const d=document.createElement('div');d.className='ev';d.innerHTML=`<span class="ts">${ts}</span><span>${msg}</span>`;l.appendChild(d);while(l.children.length>30)l.removeChild(l.firstChild);}
+const hhmm=h=>String(Math.floor(h)).padStart(2,'0')+':'+String(Math.floor((h%1)*60)).padStart(2,'0');
+function phaseName(h){return h<5.5?'Night':h<8?'Dawn':h<16?'Midday':h<18.5?'Dusk':h<21?'Evening':'Night';}
+function updateHUD(st,dt){
+  efcThru+=Math.abs(st.power)*dt;servedE+=st.served*dt;loadE+=st.load*dt;solarUsed+=Math.min(st.solar,st.load+Math.max(0,-st.power))*dt;if(st.unmet>0.5)lolMin+=dt*60;
+  $('clock').textContent=hhmm(sim.hour);$('phase').textContent=phaseName(sim.hour);$('nowlbl').textContent=hhmm(sim.hour);
+  $('socFill').style.height=(sim.soc*100)+'%';$('socTxt').textContent=Math.round(sim.soc*100)+'%';
+  $('soh').textContent=(sim.soh*100).toFixed(1)+'%';$('efc').textContent=(efcThru/(2*tier.kwh)).toFixed(2)+' EFC';
+  $('base').textContent=st.baseAct.toFixed(2);$('resid').textContent=(C.residual_scale*st.a>=0?'+':'')+(C.residual_scale*st.a).toFixed(2);$('final').textContent=st.act.toFixed(2);
+  $('fcS').textContent=Math.round(mean(st.fc.solar.slice(0,3).map(deNormSolar)));
+  $('fcL').textContent=Math.round(mean(st.fc.load.slice(0,3).map(deNormLoad)));
+  let act='Holding',col='var(--muted)';
+  if(st.power>0.5){act=`Charge ${Math.round(st.power)} kW`;col='var(--batt)';}
+  else if(st.power<-0.5){act=`Discharge ${Math.round(-st.power)} kW`;col='var(--discharge,#ff9b3d)';}
+  $('action').textContent=act;$('action').style.color=ready?'var(--ink)':'var(--muted)';
+  $('why').textContent=!ready?'Baseline load-follower (load the trained model to enable PPO).':
+    st.unmet>0.5?'Shortfall — pack at reserve floor, load shed.':st.power>0?'Banking energy (forecast-aware).':'Serving load from battery.';
+  const sv=loadE>0?servedE/loadE*100:100;
+  $('kServed').textContent=sv.toFixed(1);$('kLol').textContent=Math.round(lolMin);$('kSolar').textContent=Math.round(solarUsed);
+  if(st.power>0.5)pushLog(hhmm(sim.hour),`Charging ${Math.round(st.power)} kW from solar.`);
+  else if(st.power<-0.5)pushLog(hhmm(sim.hour),`Discharging ${Math.round(-st.power)} kW to serve load.`);
+  if(st.unmet>0.5)pushLog(hhmm(sim.hour),`⚠ Shortfall ${Math.round(st.unmet)} kW — load shed.`);
+}
+
+/* ===================== alarm ===================== */
+let actx=null,beepT=null;
+function setAlarm(on){
+  $('alarm').classList.toggle('on',on);$('atag').classList.toggle('on',on);
+  if(on&&!beepT){if(!actx)try{actx=new(window.AudioContext||window.webkitAudioContext)()}catch(e){}beep();beepT=setInterval(beep,650);}
+  if(!on&&beepT){clearInterval(beepT);beepT=null;}
+}
+function beep(){if(!actx||sim.muted)return;const o=actx.createOscillator(),g=actx.createGain();o.type='square';o.frequency.value=860;o.connect(g);g.connect(actx.destination);const t=actx.currentTime;g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.22,t+.02);g.gain.exponentialRampToValueAtTime(.0001,t+.18);o.start(t);o.stop(t+.2);}
+
+
+/* ====== 3D SCENE (verified) ====== */
+const canvas=document.getElementById('scene');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.0;
+
+const scene=new THREE.Scene(); scene.fog=new THREE.Fog(0x9fb6c2,70,260);
+const camera=new THREE.PerspectiveCamera(42,innerWidth/innerHeight,.1,600);
+
+const hemi=new THREE.HemisphereLight(0xcfe2f0,0x3a3026,0.6); scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xfff2dc,2.0);
+sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.near=1; sun.shadow.camera.far=200;
+sun.shadow.camera.left=-50; sun.shadow.camera.right=50; sun.shadow.camera.top=50; sun.shadow.camera.bottom=-50;
+sun.shadow.bias=-0.0004; scene.add(sun); scene.add(sun.target);
+const fill=new THREE.DirectionalLight(0x88a0c0,0.25); fill.position.set(-30,20,-20); scene.add(fill);
+
+/* sky dome */
+const skyUniforms={top:{value:new THREE.Color(0x2a4a78)},bot:{value:new THREE.Color(0xcdd9e0)},off:{value:18},exp:{value:0.6}};
+const sky=new THREE.Mesh(new THREE.SphereGeometry(400,32,16),
+  new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,uniforms:skyUniforms,
+    vertexShader:`varying vec3 w; void main(){ w=(modelMatrix*vec4(position,1.)).xyz; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    fragmentShader:`uniform vec3 top; uniform vec3 bot; uniform float off; uniform float exp; varying vec3 w;
+      void main(){ float h=normalize(w+vec3(0.,off,0.)).y; gl_FragColor=vec4(mix(bot,top,pow(max(h,0.),exp)),1.);}`}));
+sky.material.toneMapped=false; scene.add(sky);
+
+/* ground + pad + fence */
+const terrain=new THREE.Mesh(new THREE.PlaneGeometry(600,600),new THREE.MeshStandardMaterial({color:0x7d7355,roughness:1}));
+terrain.rotation.x=-Math.PI/2; terrain.position.y=-0.02; terrain.receiveShadow=true; scene.add(terrain);
+const pad=new THREE.Mesh(new THREE.BoxGeometry(52,0.25,40),new THREE.MeshStandardMaterial({color:0x6f6a60,roughness:.95}));
+pad.position.set(0,0.12,0); pad.receiveShadow=true; scene.add(pad);
+const fenceMat=new THREE.MeshStandardMaterial({color:0x5b6066,roughness:.6,metalness:.6});
+function fenceLine(x1,z1,x2,z2){const len=Math.hypot(x2-x1,z2-z1),n=Math.round(len/3);
+  for(let i=0;i<=n;i++){const t=i/n,px=x1+(x2-x1)*t,pz=z1+(z2-z1)*t;
+    const post=new THREE.Mesh(new THREE.CylinderGeometry(.07,.07,2,6),fenceMat);
+    post.position.set(px,1,pz); post.castShadow=true; scene.add(post);}
+  const rail=new THREE.Mesh(new THREE.BoxGeometry(len,.06,.06),fenceMat);
+  rail.position.set((x1+x2)/2,1.7,(z1+z2)/2); rail.rotation.y=-Math.atan2(z2-z1,x2-x1); scene.add(rail);}
+fenceLine(-25,-20,25,-20); fenceLine(-25,20,25,20); fenceLine(-25,-20,-25,20); fenceLine(25,-20,25,20);
+
+/* solar array */
+const panelMats=[];
+const steel=new THREE.MeshStandardMaterial({color:0x9aa2a8,roughness:.5,metalness:.8});
+const glassMat=()=>{const m=new THREE.MeshStandardMaterial({color:0x10243d,roughness:.25,metalness:.55,emissive:0x0a1c33,emissiveIntensity:0});panelMats.push(m);return m;};
+const array=new THREE.Group(); array.position.set(-14,0,0); scene.add(array);
+for(let r=0;r<3;r++)for(let c=0;c<5;c++){
+  const g=new THREE.Group();
+  const panel=new THREE.Mesh(new THREE.BoxGeometry(2.6,.1,1.7),glassMat());
+  panel.rotation.x=-0.42; panel.position.y=1.5; panel.castShadow=true;
+  for(let k=-1;k<2;k++){const ml=new THREE.Mesh(new THREE.BoxGeometry(.04,.12,1.72),new THREE.MeshStandardMaterial({color:0x2c4a66}));
+    ml.rotation.x=-0.42; ml.position.set(k*0.85,1.5,0); g.add(ml);}
+  const legA=new THREE.Mesh(new THREE.BoxGeometry(.1,1.4,.1),steel); legA.position.set(0,.7,.55);
+  const legB=new THREE.Mesh(new THREE.BoxGeometry(.1,2.0,.1),steel); legB.position.set(0,1.0,-.55);
+  legA.castShadow=legB.castShadow=true; g.add(panel); g.add(legA); g.add(legB);
+  g.position.set(c*3.0,0,r*2.6-2.6); array.add(g);
+}
+const solarAnchor=new THREE.Vector3(-8,3.6,0);
+
+/* ---------- WEATHER SENSOR STATION (the API feed) ---------- */
+const sensors=new THREE.Group(); sensors.position.set(-21,0,-9); scene.add(sensors);
+const mast=new THREE.Mesh(new THREE.CylinderGeometry(.08,.11,5,8),steel); mast.position.y=2.5; mast.castShadow=true; sensors.add(mast);
+const arm=new THREE.Mesh(new THREE.BoxGeometry(1.3,.05,.05),steel); arm.position.set(.55,4.2,0); sensors.add(arm);
+const pyraMat=new THREE.MeshStandardMaterial({color:0xeef3f7,roughness:.3,metalness:.1,emissive:0xffe6a6,emissiveIntensity:0});
+const pyra=new THREE.Mesh(new THREE.SphereGeometry(.2,16,12,0,Math.PI*2,0,Math.PI/2),pyraMat); pyra.position.set(1.05,4.22,0); sensors.add(pyra);
+const anem=new THREE.Group(); anem.position.set(0,5.05,0); sensors.add(anem);
+for(let i=0;i<3;i++){const a=i/3*Math.PI*2;
+  const spoke=new THREE.Mesh(new THREE.BoxGeometry(.42,.03,.03),steel); spoke.position.set(Math.cos(a)*.21,0,Math.sin(a)*.21); spoke.rotation.y=-a; anem.add(spoke);
+  const cup=new THREE.Mesh(new THREE.SphereGeometry(.11,10,8,0,Math.PI),new THREE.MeshStandardMaterial({color:0xdde3e8,roughness:.5}));
+  cup.position.set(Math.cos(a)*.42,0,Math.sin(a)*.42); anem.add(cup);}
+const logger=new THREE.Mesh(new THREE.BoxGeometry(.55,.8,.4),new THREE.MeshStandardMaterial({color:0x2a3640,roughness:.6,metalness:.4}));
+logger.position.set(.45,.8,.35); logger.castShadow=true; sensors.add(logger);
+const sLedMat=new THREE.MeshStandardMaterial({color:0x113,emissive:0x33d36f,emissiveIntensity:1});
+const sLed=new THREE.Mesh(new THREE.SphereGeometry(.05,8,8),sLedMat); sLed.position.set(.45,1.12,.56); sensors.add(sLed);
+const sensorAnchor=new THREE.Vector3(-21,5.6,-9);
+
+/* ---------- BESS ---------- */
+const bess=new THREE.Group(); bess.position.set(2,0,10); scene.add(bess);
+const plinth=new THREE.Mesh(new THREE.BoxGeometry(8.4,.5,3.4),new THREE.MeshStandardMaterial({color:0x55524c,roughness:.95}));
+plinth.position.y=.25; plinth.receiveShadow=true; bess.add(plinth);
+const body=new THREE.Mesh(new THREE.BoxGeometry(8,3,3),new THREE.MeshStandardMaterial({color:0x33424a,roughness:.55,metalness:.55}));
+body.position.y=2.0; body.castShadow=true; body.receiveShadow=true; bess.add(body);
+const roof=new THREE.Mesh(new THREE.BoxGeometry(8.2,.18,3.2),new THREE.MeshStandardMaterial({color:0x2a363d,roughness:.6,metalness:.5}));
+roof.position.y=3.55; bess.add(roof);
+const NMOD=12, modMats=[];
+const rackBack=new THREE.Mesh(new THREE.BoxGeometry(7.4,2.4,.2),new THREE.MeshStandardMaterial({color:0x10171b,roughness:.9}));
+rackBack.position.set(0,2.0,1.46); bess.add(rackBack);
+for(let i=0;i<NMOD;i++){
+  const m=new THREE.MeshStandardMaterial({color:0x1c2a30,roughness:.5,metalness:.3,emissive:0x000000,emissiveIntensity:0}); modMats.push(m);
+  const mod=new THREE.Mesh(new THREE.BoxGeometry(.5,2.0,.16),m); mod.position.set(-3.3+i*0.6,2.0,1.56); bess.add(mod);
+  const led=new THREE.Mesh(new THREE.SphereGeometry(.05,8,8),new THREE.MeshStandardMaterial({color:0x223,emissive:0x000,emissiveIntensity:0}));
+  led.position.set(-3.3+i*0.6,2.9,1.66); m.userLed=led; bess.add(led);
+}
+const gaugeTrack=new THREE.Mesh(new THREE.BoxGeometry(.18,2.4,.5),new THREE.MeshStandardMaterial({color:0x10171b,roughness:.9})); gaugeTrack.position.set(-4.05,2.0,0); bess.add(gaugeTrack);
+const gaugeFill=new THREE.Mesh(new THREE.BoxGeometry(.22,2.3,.42),new THREE.MeshStandardMaterial({color:0x3fd6bf,emissive:0x3fd6bf,emissiveIntensity:.7})); gaugeFill.position.set(-4.05,2.0,0); bess.add(gaugeFill);
+const battBus=new THREE.Vector3(4,2.0,9.5);
+
+/* ---------- inverter / PCS ---------- */
+const ctrl=new THREE.Group(); ctrl.position.set(12,0,7); scene.add(ctrl);
+const cwall=new THREE.Mesh(new THREE.BoxGeometry(4,3,3.4),new THREE.MeshStandardMaterial({color:0xb9b2a4,roughness:.95})); cwall.position.y=1.5; cwall.castShadow=true; ctrl.add(cwall);
+const croof=new THREE.Mesh(new THREE.BoxGeometry(4.4,.3,3.8),new THREE.MeshStandardMaterial({color:0x6b7378,roughness:.6,metalness:.5})); croof.position.y=3.15; ctrl.add(croof);
+const door=new THREE.Mesh(new THREE.BoxGeometry(1,2,.1),new THREE.MeshStandardMaterial({color:0x4a4540})); door.position.set(0,1,1.71); ctrl.add(door);
+const invAnchor=new THREE.Vector3(12,2.4,7);
+
+/* ---------- AI BATTERY EMS (the LSTM+PPO controller) ---------- */
+const ems=new THREE.Group(); ems.position.set(8,0,13.5); scene.add(ems);
+const rack=new THREE.Mesh(new THREE.BoxGeometry(2.2,2.8,1.5),new THREE.MeshStandardMaterial({color:0x121a20,roughness:.5,metalness:.5}));
+rack.position.y=1.4; rack.castShadow=true; ems.add(rack);
+const emsStripMat=new THREE.MeshStandardMaterial({color:0x5ad1ff,emissive:0x5ad1ff,emissiveIntensity:1});
+const emsStrip=new THREE.Mesh(new THREE.BoxGeometry(1.7,.14,.05),emsStripMat); emsStrip.position.set(0,2.45,.76); ems.add(emsStrip);
+const emsLeds=[];
+for(let i=0;i<7;i++){const lm=new THREE.MeshStandardMaterial({color:0x111,emissive:0x5ad1ff,emissiveIntensity:.7});
+  const l=new THREE.Mesh(new THREE.SphereGeometry(.045,6,6),lm); l.position.set(-.78+i*.26,1.8,.76); ems.add(l); emsLeds.push(lm);}
+const emsAnchor=new THREE.Vector3(8,3.2,13.5);
+
+/* ---------- village (load) ---------- */
+const village=new THREE.Group(); village.position.set(17,0,-13); scene.add(village);
+const windows=[];
+function building(x,z,w,d,col){const g=new THREE.Group();
+  const wall=new THREE.Mesh(new THREE.BoxGeometry(w,2.4,d),new THREE.MeshStandardMaterial({color:col,roughness:.95})); wall.position.y=1.2; wall.castShadow=true; wall.receiveShadow=true; g.add(wall);
+  const mroof=new THREE.Mesh(new THREE.BoxGeometry(w+.3,.5,d+.3),new THREE.MeshStandardMaterial({color:0x8a5a3a,roughness:.7,metalness:.3})); mroof.position.y=2.55; mroof.rotation.z=0.06; g.add(mroof);
+  const win=new THREE.Mesh(new THREE.BoxGeometry(.6,.6,.06),new THREE.MeshStandardMaterial({color:0x20242a,emissive:0xffcf6e,emissiveIntensity:0})); win.position.set(0,1.2,d/2+.04); g.add(win); windows.push(win);
+  g.position.set(x,0,z); village.add(g);}
+building(0,0,3,3,0xcabfa6); building(4,-1.5,3.4,2.6,0xbdae90); building(-3.5,1.5,2.8,3,0xc7baa0);
+building(2.5,3,3,2.8,0xb6a888); building(-1,-3,3.2,2.6,0xc2b49a); building(6,1.6,2.6,2.8,0xc9bca2);
+const villageFeed=new THREE.Vector3(17,1.6,-13);
+
+/* ---------- power lines ---------- */
+function powerline(ax,az,bx,bz,h,thick){const a=new THREE.Vector3(ax,h,az),b=new THREE.Vector3(bx,h,bz);
+  const dir=new THREE.Vector3().subVectors(b,a),len=dir.length();
+  const cable=new THREE.Mesh(new THREE.CylinderGeometry(thick||.05,thick||.05,len,5),new THREE.MeshStandardMaterial({color:0x1b1f24,roughness:.7,metalness:.3}));
+  cable.position.copy(a).addScaledVector(dir,.5); cable.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),dir.clone().normalize()); scene.add(cable);
+  const n=Math.max(1,Math.round(len/6));
+  for(let i=0;i<=n;i++){const t=i/n;const post=new THREE.Mesh(new THREE.CylinderGeometry(.08,.11,h,6),new THREE.MeshStandardMaterial({color:0x6b5a44,roughness:1}));
+    post.position.set(ax+(bx-ax)*t,h/2,az+(bz-az)*t); post.castShadow=true; scene.add(post);}}
+powerline(-8,0,12,7,2.0); powerline(4,9.5,12,7,1.9); powerline(12,7,17,-13,2.6);
+
+/* ---------- sun & moon ---------- */
+const sunDisc=new THREE.Mesh(new THREE.SphereGeometry(3,24,24),new THREE.MeshBasicMaterial({color:0xffe6a6})); sunDisc.material.toneMapped=false; scene.add(sunDisc);
+const moon=new THREE.Mesh(new THREE.SphereGeometry(1.8,20,20),new THREE.MeshBasicMaterial({color:0xccd4e2})); moon.material.toneMapped=false; scene.add(moon);
+
+/* ---------- flow particles ---------- */
+function makeFlow(color,arc){const grp=new THREE.Group();scene.add(grp);const pts=[];const mat=new THREE.MeshBasicMaterial({color});mat.toneMapped=false;
+  for(let i=0;i<9;i++){const m=new THREE.Mesh(new THREE.SphereGeometry(.13,8,8),mat.clone());m.visible=false;grp.add(m);pts.push(m);}
+  return {pts,from:new THREE.Vector3(),to:new THREE.Vector3(),active:0,phase:0,arc:(arc==null?0.25:arc)};}
+const flows={
+  sunPanel:makeFlow(0xf3b53f,0.7), solarInv:makeFlow(0xffe0a0,0.25),
+  invBatt:makeFlow(0x3fd6bf,0.25), battInv:makeFlow(0xff9b3d,0.25),
+  invLoad:makeFlow(0xffe0a0,0.35),
+  senseEms:makeFlow(0x5ad1ff,0.5),   // sensor data -> AI EMS
+  emsBatt:makeFlow(0x5ad1ff,0.3),    // PPO control signal -> battery
+};
+function updateFlow(f,dt){f.phase=(f.phase+dt*(.35+f.active))%1;const n=Math.round(f.active*f.pts.length);
+  for(let i=0;i<f.pts.length;i++){const p=f.pts[i];
+    if(i<n){p.visible=true;let t=(f.phase+i/n)%1;p.position.lerpVectors(f.from,f.to,t);p.position.y+=Math.sin(t*Math.PI)*f.arc;p.scale.setScalar(.7+.5*Math.sin(t*Math.PI));}else p.visible=false;}}
+
+/* ---------- camera ---------- */
+let camAz=1.05,camEl=0.34,camR=50,autoRot=true,drag=false,px=0,py=0;
+if(matchMedia('(prefers-reduced-motion: reduce)').matches)autoRot=false;
+canvas.addEventListener('pointerdown',e=>{drag=true;autoRot=false;px=e.clientX;py=e.clientY});
+addEventListener('pointerup',()=>drag=false);
+addEventListener('pointermove',e=>{if(!drag)return;camAz-=(e.clientX-px)*.005;camEl+=(e.clientY-py)*.005;camEl=Math.max(.1,Math.min(1.2,camEl));px=e.clientX;py=e.clientY;});
+canvas.addEventListener('wheel',e=>{e.preventDefault();camR=Math.max(26,Math.min(100,camR+e.deltaY*.03));},{passive:false});
+function updateCamera(dt){if(autoRot)camAz+=dt*0.04;
+  camera.position.set(Math.cos(camAz)*Math.cos(camEl)*camR,Math.sin(camEl)*camR+5,Math.sin(camAz)*Math.cos(camEl)*camR);
+  camera.lookAt(2,2.5,2);}
+
+/* ---------- sky time-of-day ---------- */
+const SKYTOP=[[0,0x0b1430],[5,0x12224a],[6.5,0x4a4a78],[8,0x3f6aa8],[12,0x2f6fc0],[16,0x3a6fb0],[18,0x9a5a55],[19.5,0x3a2c52],[21,0x121a36],[24,0x0b1430]];
+const SKYBOT=[[0,0x0a1020],[5,0x1c2436],[6.5,0xc88a6a],[8,0xc6d2da],[12,0xd6e2ea],[16,0xcdd9e0],[18,0xe0a070],[19.5,0x6a4a58],[21,0x161e2e],[24,0x0a1020]];
+function rampColor(arr,h){for(let i=0;i<arr.length-1;i++){if(h>=arr[i][0]&&h<=arr[i+1][0]){const t=(h-arr[i][0])/(arr[i+1][0]-arr[i][0]);return new THREE.Color(arr[i][1]).lerp(new THREE.Color(arr[i+1][1]),t);}}return new THREE.Color(arr[0][1]);}
+
+/* ---------- 3D labels ---------- */
+const labelsRoot=document.getElementById('labels'); let labelsOn=true;
+const LABELS=[
+  {anchor:solarAnchor.clone().setY(4.4), title:'Solar array', sub:()=>tier.kwp+' kWp'},
+  {anchor:sensorAnchor, title:'Weather sensors', sub:()=>Math.round(ghiNow(sim.hour))+' W/m²'},
+  {anchor:new THREE.Vector3(2,4.2,10), title:'Battery storage', sub:()=>tier.kwh+' kWh · '+Math.round(sim.soc*100)+'%'},
+  {anchor:emsAnchor, title:'AI Battery EMS', sub:()=>'LSTM + PPO'},
+  {anchor:invAnchor.clone().setY(3.9), title:'Inverter / PCS', sub:()=>null},
+  {anchor:new THREE.Vector3(17,3.6,-13), title:'Community load', sub:()=>Math.round(loadKW(sim.hour))+' kW'},
+];
+LABELS.forEach(L=>{const el=document.createElement('div');el.className='lab3d';
+  el.innerHTML='<b>'+L.title+'</b>'+(L.sub()!==null?'<span></span>':'');L.el=el;L.span=el.querySelector('span');labelsRoot.appendChild(el);});
+const _v=new THREE.Vector3();
+function updateLabels(){const W=innerWidth,H=innerHeight;
+  for(const L of LABELS){if(!labelsOn){L.el.style.display='none';continue;}
+    _v.copy(L.anchor).project(camera);
+    if(_v.z>1){L.el.style.display='none';continue;}
+    L.el.style.display='block'; L.el.style.left=((_v.x*0.5+0.5)*W)+'px'; L.el.style.top=((-_v.y*0.5+0.5)*H)+'px';
+    if(L.span){const s=L.sub();if(s!==null)L.span.textContent=s;}}}
+
+/* ================= ghiNow + setChip (shared) ================= */
+function ghiNow(h){return DAY?dayVal(DAY.ghi,h):0;}
+function setChip(chip,txt,t,cls){document.getElementById(chip).className='chip '+(cls||'');document.getElementById(txt).textContent=t;}
+
+/* ================= 3D view, driven by the SAME real-model step() ================= */
+function size3D(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);}
+function update3D(st, now, real){
+  const ang=(sim.hour/24)*Math.PI*2-Math.PI/2, sx=Math.cos(ang)*90,sy=Math.sin(ang)*70,sz=40;
+  sunDisc.position.set(sx,sy,sz); sun.position.set(sx,Math.max(sy,3),sz); sun.target.position.set(0,0,0);
+  sun.intensity=Math.max(0,Math.min(1,(sy+4)/30))*2.1; sun.color.setHex(sy<14?0xffb27a:0xfff2dc);
+  sunDisc.visible=sy>-6; moon.position.set(-sx,-sy,sz); moon.visible=sy<8; hemi.intensity=.15+.32*Math.max(0,sy/70);
+  skyUniforms.top.value.copy(rampColor(SKYTOP,sim.hour)); skyUniforms.bot.value.copy(rampColor(SKYBOT,sim.hour)); scene.fog.color.copy(skyUniforms.bot.value);
+  const s=st.solar,l=st.load,charge=Math.max(0,st.power),discharge=Math.max(0,-st.power),directSolar=Math.min(s,l);
+  const solFrac=s/Math.max(tier.kwp*C.pv_derating,1); panelMats.forEach(m=>m.emissiveIntensity=.02+solFrac*.5);
+  pyraMat.emissiveIntensity=Math.min(1.1, st.ghi/1000); anem.rotation.y+=real*(0.6+solFrac*4);
+  sLedMat.emissiveIntensity=0.4+0.6*Math.abs(Math.sin(now*0.006));
+  const socT=(sim.soc-C.soc_min)/(C.soc_max-C.soc_min), lit=Math.round(socT*NMOD);
+  const col=sim.soc<.2?0xff5566:sim.soc<.4?0xffb24a:0x3fd6bf;
+  modMats.forEach((m,i)=>{const on=i<lit;m.emissive.setHex(on?col:0x000000);m.emissiveIntensity=on?.9:0;m.userLed.material.emissive.setHex(on?col:0x202833);m.userLed.material.emissiveIntensity=on?1.0:0;});
+  gaugeFill.scale.y=Math.max(.02,socT);gaugeFill.position.y=2.0-(1.15*(1-socT));gaugeFill.material.color.setHex(col);gaugeFill.material.emissive.setHex(col);
+  const act=Math.min(1,(charge+discharge)/maxP);
+  emsStripMat.emissiveIntensity=0.5+0.8*act+0.2*Math.sin(now*0.012);
+  emsLeds.forEach((m,i)=>m.emissiveIntensity=0.3+0.7*Math.abs(Math.sin(now*0.01+i*0.9)));
+  const night=sy<3, powered=st.unmet<.01;
+  windows.forEach((w,i)=>{let tg=!powered?0:(night?1.3:0.12);if(!powered&&Math.sin(now*.012+i)>0)tg=.06;w.material.emissiveIntensity+=(tg-w.material.emissiveIntensity)*.12;w.material.emissive.setHex(powered?0xffcf6e:0xff5566);});
+  const f=flows, up=sy>0;
+  f.sunPanel.from.copy(sunDisc.position);f.sunPanel.to.copy(solarAnchor);f.sunPanel.active=up?Math.min(1,solFrac+.12):0;
+  f.solarInv.from.copy(solarAnchor);f.solarInv.to.copy(invAnchor);f.solarInv.active=Math.min(1,(directSolar+charge)/Math.max(tier.load*2,1));
+  f.invBatt.from.copy(invAnchor);f.invBatt.to.copy(battBus);f.invBatt.active=Math.min(1,charge/maxP);
+  f.battInv.from.copy(battBus);f.battInv.to.copy(invAnchor);f.battInv.active=Math.min(1,discharge/maxP);
+  f.invLoad.from.copy(invAnchor);f.invLoad.to.copy(villageFeed);f.invLoad.active=Math.min(1,st.served/Math.max(tier.load*2.2,1));
+  f.senseEms.from.copy(sensorAnchor);f.senseEms.to.copy(emsAnchor);f.senseEms.active=0.8;
+  f.emsBatt.from.copy(emsAnchor);f.emsBatt.to.copy(battBus);f.emsBatt.active=0.4+0.6*act;
+  for(const k in f)updateFlow(f[k],real);
+  updateCamera(real); renderer.render(scene,camera); updateLabels();
+  const dd=document.getElementById('d3dec'),ds=document.getElementById('d3stat');
+  dd.textContent = st.power>0.5?`Charge ${Math.round(st.power)} kW`:st.power<-0.5?`Discharge ${Math.round(-st.power)} kW`:'Holding';
+  dd.style.color = ready?'var(--ink)':'var(--muted)';
+  ds.textContent = st.unmet<0.01?'Load served · '+(ready?'real LSTM+PPO':'baseline'):('SHORTFALL '+Math.round(st.unmet)+' kW');
+  ds.style.color = st.unmet<0.01?'var(--good)':'var(--bad)';
+}
+
+/* ================= view switching ================= */
+let activeView='3d';
+const view3d=document.getElementById('view3d'), viewDash=document.getElementById('viewDash');
+function show3D(){activeView='3d';viewDash.style.display='none';view3d.style.display='block';document.getElementById('to3d').classList.add('on');document.getElementById('toDashTab').classList.remove('on');size3D();}
+function showDash(){activeView='dash';view3d.style.display='none';viewDash.style.display='block';document.getElementById('toDashTab').classList.add('on');document.getElementById('to3d').classList.remove('on');fit();}
+document.getElementById('toDash').onclick=showDash;
+document.getElementById('toDashTab').onclick=showDash;
+document.getElementById('to3d').onclick=show3D;
+document.getElementById('backTo3d').onclick=show3D;
+
+/* ================= controls (shared) ================= */
+document.getElementById('play').onclick=()=>{if(!actx)try{actx=new(window.AudioContext||window.webkitAudioContext)()}catch(e){}sim.playing=!sim.playing;document.getElementById('play').textContent=sim.playing?'❚❚ Pause':'► Play';};
+document.getElementById('mute').onclick=()=>{sim.muted=!sim.muted;document.getElementById('mute').textContent=sim.muted?'🔕':'🔔';};
+document.getElementById('speed').oninput=e=>sim.speed=+e.target.value;
+document.querySelectorAll('#tier button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#tier button').forEach(x=>x.classList.remove('on'));b.classList.add('on');tier=TIERS[b.dataset.t];maxP=Math.min(.5*tier.kwh,.8*tier.kwp);document.getElementById('packTag').textContent=tier.kwh+' kWh';H_solar=[];H_load=[];H_batt=[];H_unmet=[];efcThru=servedE=loadE=solarUsed=lolMin=0;});
+document.getElementById('town').onchange=e=>{const[la,lo]=e.target.value.split(',');document.getElementById('lat').value=la;document.getElementById('lon').value=lo;};
+document.getElementById('loadWx').onclick=()=>{H_solar=[];H_load=[];H_batt=[];H_unmet=[];efcThru=servedE=loadE=solarUsed=lolMin=0;loadWeather(+document.getElementById('lat').value,+document.getElementById('lon').value,document.getElementById('town').options[document.getElementById('town').selectedIndex].text);};
+document.getElementById('loadModel').onclick=()=>document.getElementById('modelFile').click();
+document.getElementById('modelFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+  rd.onload=()=>{try{W=JSON.parse(rd.result);
+    if(typeof W.act_W?.[0]==='number')W.act_W=[W.act_W];   // flat [256] -> [[256]]
+    if(typeof W.act_b==='number')W.act_b=[W.act_b];          // scalar -> [scalar]
+    for(const k of['residual_scale','pv_derating','soc_min','soc_max','eta','max_solar_kwp','max_bat_kwh','max_load_kw','obs_hourly','vn_clip','vn_eps'])if(W[k]!=null)C[k]=W[k];ready=true;setChip('modelChip','modelTxt','Real LSTM + PPO active','ai');document.getElementById('polTag').textContent='residual-PPO';}catch(err){setChip('modelChip','modelTxt','Bad model file','err');}};
+  rd.readAsText(f);};
+addEventListener('resize',()=>{size3D();fit();});
+
+/* ================= main loop (shared engine drives both views) ================= */
+let last=performance.now(), lastSt=null;
+function frame(now){
+  const real=Math.min((now-last)/1000,.05); last=now;
+  if(!DAY){requestAnimationFrame(frame);return;}
+  const dt=real*sim.speed*3;
+  if(sim.playing) sim.hour=(sim.hour+dt)%24;
+  const st=step(Math.max(dt,1e-3)); lastSt=st;
+  const k=Math.floor(sim.hour); pushHist(k,st);
+  updateHUD(st, sim.playing?dt:0);
+  if(activeView==='dash'){ drawChart(k,st.fc); drawSLD(st); }
+  else { update3D(st, now, real); }
+  setAlarm(st.unmet>0.5);
+  requestAnimationFrame(frame);
+}
+
+/* ================= init ================= */
+size3D(); fit(); show3D();
+loadWeather(6.30,0.05,'Akosombo');
+requestAnimationFrame(frame);
+
+</script>
+</body>
+</html>
