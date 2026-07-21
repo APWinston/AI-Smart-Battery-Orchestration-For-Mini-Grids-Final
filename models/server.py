@@ -17,7 +17,7 @@ Endpoints:
     GET  /api/state   full live state (engine truth) — poll this
     POST /api/stop    stop the current run
 """
-import os, json, time, math, threading, urllib.request, datetime as dt
+import os, sys, json, time, math, threading, urllib.request, datetime as dt
 import numpy as np
 
 # ============================================================
@@ -311,7 +311,7 @@ class Controller:
                 "kpi": {"served": 0.0, "loadE": 0.0, "lol": 0.0, "efc": 0.0},
                 "today": {"date": DAY["date"], "served": 0.0, "loadE": 0.0, "lol": 0.0},
                 "days": [],
-                "log": [f"{self.hhmm(abs0)} · run started · SoC {cfg['soc']}% (operator) · "
+                "log": [f"{self.hhmm(abs0)} · run started by {cfg.get('operator','operator')} · SoC {cfg['soc']}% · "
                         f"{tier['kwp']:.0f} kWp / {tier['kwh']:.0f} kWh / {tier['load']:.1f} kW mean"],
                 "soc": soc0, "soh": 1.0,
                 "started_iso": dt.datetime.now().isoformat(timespec="seconds")}
@@ -464,12 +464,58 @@ from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from pydantic import BaseModel
 import secrets
 
-# ---- operator login ----
-# Locally these defaults apply; in production set OPERATOR_USER / OPERATOR_PASS
-# as environment variables (e.g. in the Render dashboard) so they are not in the code.
+# ---- operator accounts ----
+# Three sources, checked in order:
+#   1. users.json next to server.py — per-operator accounts with salted PBKDF2
+#      hashes. Manage with:  python server.py adduser <name>   (prompts for password)
+#   2. OPERATORS env var — "name1:pass1,name2:pass2" (set privately in the Render
+#      dashboard; survives redeploys, never in the code)
+#   3. OPERATOR_USER / OPERATOR_PASS env vars — single-account fallback
+import hashlib, hmac as _hmac, getpass as _getpass
+
+USERS_FILE = os.path.join(HERE, "users.json")
 OPERATOR_USER = os.environ.get("OPERATOR_USER", "operator")
 OPERATOR_PASS = os.environ.get("OPERATOR_PASS", "srep2026")
-TOKENS = set()
+TOKENS = {}          # token -> username
+
+def _load_users():
+    try:
+        with open(USERS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _hash_pw(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt),
+                               200_000).hex()
+
+def check_login(username, password):
+    users = _load_users()
+    if username in users:                                  # 1. hashed local accounts
+        u = users[username]
+        return _hmac.compare_digest(_hash_pw(password, u["salt"]), u["hash"])
+    env_ops = os.environ.get("OPERATORS", "")
+    for pair in env_ops.split(","):                        # 2. env accounts
+        if ":" in pair:
+            n, p = pair.split(":", 1)
+            if n.strip() == username:
+                return _hmac.compare_digest(p, password)
+    return (username == OPERATOR_USER                      # 3. single fallback
+            and _hmac.compare_digest(password, OPERATOR_PASS))
+
+def add_user_cli():
+    name = sys.argv[2] if len(sys.argv) > 2 else input("username: ").strip()
+    pw = _getpass.getpass(f"password for {name}: ")
+    pw2 = _getpass.getpass("repeat: ")
+    if pw != pw2 or not pw:
+        print("passwords do not match or empty; aborted"); return
+    users = _load_users()
+    salt = secrets.token_hex(16)
+    users[name] = {"salt": salt, "hash": _hash_pw(pw, salt)}
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f, indent=1)
+    print(f"user '{name}' saved to {os.path.basename(USERS_FILE)} "
+          f"({len(users)} account(s) total)")
 
 class LoginCfg(BaseModel):
     username: str
@@ -538,13 +584,15 @@ def assets(name: str):
 def _require(x_auth: str):
     if x_auth not in TOKENS:
         raise HTTPException(status_code=401, detail="login required")
+    return TOKENS[x_auth]
 
 @app.post("/api/login")
 def api_login(cfg: LoginCfg):
-    if cfg.username == OPERATOR_USER and cfg.password == OPERATOR_PASS:
+    if check_login(cfg.username.strip(), cfg.password):
         t = secrets.token_hex(16)
-        TOKENS.add(t)
+        TOKENS[t] = cfg.username.strip()
         return {"ok": True, "token": t}
+    time.sleep(0.6)          # slow brute force attempts
     raise HTTPException(status_code=403, detail="invalid credentials")
 
 @app.get("/")
@@ -556,9 +604,10 @@ def root():
 
 @app.post("/api/start")
 def api_start(cfg: StartCfg, x_auth: str = Header(default="")):
-    _require(x_auth)
+    user = _require(x_auth)
     c = cfg.dict()
     c["soc"] = max(10.0, min(95.0, c["soc"]))
+    c["operator"] = user
     return JSONResponse(CTRL.start(c))
 
 @app.get("/api/production-log")
@@ -582,6 +631,9 @@ def api_stop(x_auth: str = Header(default="")):
     return {"ok": True}
 
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "adduser":
+        add_user_cli(); raise SystemExit
     import uvicorn
     print("SREP AI Battery EMS · backend")
     print(f"  login: {OPERATOR_USER} / {OPERATOR_PASS}   (edit OPERATOR_USER/PASS at the top of server.py)")

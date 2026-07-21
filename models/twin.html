@@ -1,4 +1,4 @@
-<!DOCTYPE html><html><head><meta charset='utf-8'><title>SREP Mini Grid AI Battery EMS</title><style>html,body{margin:0;padding:0;background:#eef2f6;}</style></head><body>
+<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>SREP Mini Grid AI Battery EMS</title><style>html,body{margin:0;padding:0;background:#eef2f6;}</style></head><body>
 <style>
   :root{--bg:#e7ebef;--panel:#ffffff;--line:#d7dee6;--ink:#101820;--muted:#3f4a55;
         --faint:#6b7683;--accent:#0c8a55;--accent2:#12a566;--blue:#2f6fed;--bad:#c81e1e;
@@ -196,6 +196,53 @@
   .drv .b{flex:1;height:7px;background:#1c2938;border-radius:4px;position:relative;}
   .drv .b i{position:absolute;top:0;bottom:0;border-radius:4px;}
   .drv .v{width:64px;text-align:right;color:#c9dae6;}
+
+  /* ---------- mobile / tablet ---------- */
+  @media (max-width: 860px){
+    /* landing */
+    #navbar{padding:0 14px;gap:10px;height:64px;}
+    .navlink{display:none;}
+    #navlogout{display:none !important;}
+    .brandtxt b{font-size:15px;} .brandtxt span{font-size:10.5px;}
+    #brandimg{height:42px;width:42px;}
+    .pillbtn{padding:10px 16px;font-size:13.5px;}
+    #hero{top:64px;}
+    #hero .inner{padding:0 20px;}
+    #heyebrow{font-size:16px;margin-bottom:10px;}
+    #hhead{font-size:34px;}
+    #hsub{font-size:14.5px;margin-bottom:20px;}
+    .ghostbtn{padding:10px 16px;font-size:13.5px;}
+    #dots{right:12px;gap:10px;} #dots i{width:10px;height:10px;}
+    #expnote{font-size:12.5px;bottom:8px;padding:6px 12px;}
+    /* login */
+    #logincard{width:88vw;max-width:360px;padding:28px 24px;}
+    /* setup */
+    #setup .wrap{padding:34px 16px 30px;}
+    #setup h1{font-size:26px;}
+    #setup .sub{font-size:14px;}
+    #card{grid-template-columns:1fr;gap:18px;padding:22px 18px;}
+    /* app chrome */
+    #topbar{height:auto;flex-wrap:wrap;padding:8px 12px;gap:8px 12px;}
+    #tTitle{font-size:14px;}
+    #tMeta{white-space:normal;font-size:11.5px;order:5;flex-basis:100%;}
+    #tProg{min-width:60px;}
+    #tHome,#tStop{padding:6px 10px;font-size:12px;}
+    #root{height:calc(100vh - 96px);}
+    #nav{left:8px;top:8px;} #nav button{padding:6px 10px;font-size:12px;}
+    /* console */
+    #viewdash{padding:52px 8px 12px;}
+    .kpis{grid-template-columns:repeat(2,1fr);gap:8px;}
+    .kpi .v{font-size:19px;}
+    .grid2{grid-template-columns:1fr;}
+    .planwrap{grid-template-columns:1fr;}
+    #plantable{height:200px;}
+    .h{flex-wrap:wrap;}
+    .dlbtn{padding:3px 9px;font-size:11px;}
+    /* 3D overlays */
+    #deck{left:8px;bottom:8px;padding:9px 12px;min-width:160px;}
+    #d3dec{font-size:17px;}
+    .lab3d{font-size:10.5px;padding:3px 7px;}
+  }
 </style>
 <div id="home">
   <div id="slides"><div class="shade"></div></div>
