@@ -158,16 +158,31 @@ def window24(abs_k, DAY, tier):
                      tier["load"]*LOAD_SHAPE[int(a) % 24], int(a) % 24, DAY["month"], DAY["dow"]])
     return np.nan_to_num(np.array(rows, dtype=np.float64), nan=0.0)
 
-def forecast(abs_k, DAY, tier, M):
+MC_PASSES = 8   # Monte-Carlo dropout ensemble size (uses the LSTM's trained dropout)
+
+def forecast(abs_k, DAY, tier, M, bias=None):
+    """Ensemble forecast: MC-dropout passes averaged (ensemble mean) with an
+    uncertainty-derived confidence in [0,1]. Optional online bias correction
+    (learned from production errors; no weight retraining)."""
     if M["have_lstm"]:
         import torch
         Xs = M["scaler_X"].transform(window24(abs_k, DAY, tier))
         x = torch.tensor(Xs, dtype=torch.float32).unsqueeze(0)
+        outs = []
         with torch.no_grad():
-            out = M["lstm"](x).squeeze(0).numpy()
-        out = np.clip(np.nan_to_num(out, nan=0.0), 0.0, 1.0)
+            M["lstm"].train()          # enable dropout for stochastic passes
+            for _ in range(MC_PASSES):
+                outs.append(M["lstm"](x).squeeze(0).numpy())
+            M["lstm"].eval()
+        arr = np.clip(np.nan_to_num(np.stack(outs), nan=0.0), 0.0, 1.0)
+        out = arr.mean(axis=0)                       # ensemble average
+        std = float(arr.std(axis=0)[:6].mean())      # near-term spread
+        conf = float(np.clip(1.0 - std/0.15, 0.0, 1.0))   # 0.15 norm-units ~ fully uncertain
+        if bias:                                     # online production-error correction
+            out[:, 0] = np.clip(out[:, 0] + bias.get("solar", 0.0), 0.0, 1.0)
+            out[:, 1] = np.clip(out[:, 1] + bias.get("load", 0.0), 0.0, 1.0)
         phys = M["scaler_y"].inverse_transform(out)
-        return out[:, 0], out[:, 1], phys
+        return out[:, 0], out[:, 1], phys, conf
     sol, ld = [], []
     for kk in range(FORECAST):
         hh = (abs_k + kk) % 24
@@ -175,7 +190,7 @@ def forecast(abs_k, DAY, tier, M):
         ld.append(min(1.0, load_kw(hh, tier)/max(tier["load"]*2.2, 1)))
     sol, ld = np.array(sol), np.array(ld)
     phys = np.stack([sol*1000.0, ld*max(tier["load"]*2.2, 1)], axis=1)
-    return sol, ld, phys
+    return sol, ld, phys, None
 
 def build_obs(sol_n, ld_n, hod, month, base_act, soc, soh, tier):
     h2 = C["obs_hourly"]
@@ -197,17 +212,32 @@ def ppo_action(obs, M):
     a, _ = M["ppo"].predict(on, deterministic=True)
     return float(np.clip(np.ravel(a)[0], -1.0, 1.0))
 
-def step(dt_h, abs_h, soc, soh, DAY, tier, M, maxP):
+def step(dt_h, abs_h, soc, soh, DAY, tier, M, maxP, bias=None, want_xai=False):
     if soc is None: soc = 0.5
     if soh is None: soh = 1.0
     hod = abs_h % 24
     ghi = day_val(DAY["ghi"], abs_h)
     solar = (ghi/1000.0)*tier["kwp"]*C["pv_derating"]
     load = load_kw(hod, tier)
-    sol_n, ld_n, phys = forecast(int(abs_h)+1, DAY, tier, M)
+    sol_n, ld_n, phys, conf = forecast(int(abs_h)+1, DAY, tier, M, bias=bias)
     base_act = float(np.clip((solar-load)/maxP, -1.0, 1.0))
-    a = ppo_action(build_obs(sol_n, ld_n, hod, DAY["month"], base_act, soc, soh, tier), M)
-    act = float(np.clip(base_act + C["residual_scale"]*a, -1.0, 1.0))
+    obs = build_obs(sol_n, ld_n, hod, DAY["month"], base_act, soc, soh, tier)
+    a = ppo_action(obs, M)
+    # confidence-aware residual: at low forecast confidence, trust the safe
+    # load-following term more and the learned residual less
+    trust = 1.0 if conf is None else (0.5 + 0.5*conf)
+    act = float(np.clip(base_act + C["residual_scale"]*trust*a, -1.0, 1.0))
+    drivers = []
+    if want_xai and M["have_ppo"]:
+        # local sensitivity (finite differences): what is pushing this decision
+        probes = [("Battery SoC", 0, 0.05), ("Next hours solar", slice(6, 9), 0.05),
+                  ("Next hours load", slice(30, 33), 0.05)]
+        for name, idx, eps in probes:
+            ob2 = obs.copy(); ob2[idx] = np.clip(ob2[idx] + eps, 0, 1)
+            da = ppo_action(ob2, M) - a
+            drivers.append(dict(name=name,
+                                impact_kw=round(C["residual_scale"]*trust*da*maxP, 2)))
+        drivers.sort(key=lambda d: -abs(d["impact_kw"]))
     power = act*maxP
     cap = tier["kwh"]*soh; stored = soc*cap
     if power >= 0:
@@ -221,7 +251,8 @@ def step(dt_h, abs_h, soc, soh, DAY, tier, M, maxP):
     soh = max(0.80, soh-(ac+ad)*dt_h*2e-7)
     fc_solar = (phys[:3, 0]/1000.0)*tier["kwp"]*C["pv_derating"]
     return dict(soc=soc, soh=soh, solar=solar, load=load, power=power, unmet=unmet,
-                ghi=ghi, base_act=base_act, residual=C["residual_scale"]*a, act=act,
+                ghi=ghi, base_act=base_act, residual=C["residual_scale"]*trust*a, act=act,
+                conf=(None if conf is None else round(conf, 3)), drivers=drivers,
                 fc_solar=[round(float(v), 1) for v in fc_solar],
                 fc_load=[round(float(v), 1) for v in phys[:3, 1]])
 
@@ -248,6 +279,8 @@ class Controller:
         self.lock = threading.Lock()
         self.thread = None
         self.stop_flag = False
+        self.bias = {"solar": 0.0, "load": 0.0}      # online production-error correction
+        self._prev_fc = None                          # (abs_hour_int, fc_solar_norm, fc_load_norm)
         self.state = {"status": "idle",
                       "models": {"have_lstm": M["have_lstm"], "have_ppo": M["have_ppo"],
                                  "msg": M["msg"]}}
@@ -262,6 +295,7 @@ class Controller:
         abs0 = 24.0 + DAY["local_hour"]
         soc0 = float(cfg["soc"])/100.0
         plan = make_plan(abs0, soc0, 1.0, DAY, tier, self.M, maxP)
+        self._prev_fc = None
         with self.lock:
             self.state = {
                 "status": "running",
@@ -330,7 +364,8 @@ class Controller:
                 elapsed = abs_h - S["clock"]["start_abs"]
                 S["clock"]["hod"] = abs_h % 24
                 S["clock"]["elapsed"] = elapsed
-                d = step(dt_h, abs_h, S["soc"], S["soh"], DAY, tier, self.M, cfg["maxP"])
+                d = step(dt_h, abs_h, S["soc"], S["soh"], DAY, tier, self.M, cfg["maxP"],
+                         bias=self.bias, want_xai=True)
                 S["soc"], S["soh"] = d["soc"], d["soh"]
                 hod = int(abs_h) % 24
                 S["hist"]["solar"][hod] = round(d["solar"], 2)
@@ -344,6 +379,55 @@ class Controller:
                 S["kpi"]["efc"] += abs(d["power"])*dt_h
                 prev_hod = int(abs_h - dt_h) % 24
                 if hod != prev_hod:
+                    # ---- online learning from production data (no retraining) ----
+                    # compare last hour's 1h-ahead forecast against what actually happened
+                    if self._prev_fc is not None:
+                        _, pfs, pfl = self._prev_fc
+                        act_sol_n = min(1.0, day_val(DAY["ghi"], abs_h)/1000.0)
+                        act_ld_n = min(1.0, d["load"]/max(tier["load"]*2.2, 1))
+                        alpha = 0.2   # EMA
+                        self.bias["solar"] = float(np.clip(
+                            (1-alpha)*self.bias["solar"] + alpha*(act_sol_n - pfs), -0.10, 0.10))
+                        self.bias["load"] = float(np.clip(
+                            (1-alpha)*self.bias["load"] + alpha*(act_ld_n - pfl), -0.10, 0.10))
+                    try:
+                        fs_n = min(1.0, (d["fc_solar"][0]/max(tier["kwp"]*C["pv_derating"], 1e-6)))
+                        fl_n = min(1.0, d["fc_load"][0]/max(tier["load"]*2.2, 1))
+                        self._prev_fc = (int(abs_h), fs_n, fl_n)
+                    except Exception:
+                        self._prev_fc = None
+                    # ---- production log + active-learning queue ----
+                    try:
+                        os.makedirs(ASSETS_DIR, exist_ok=True)
+                        pl = os.path.join(ASSETS_DIR, "production_log.csv")
+                        newf = not os.path.exists(pl)
+                        with open(pl, "a") as f:
+                            if newf:
+                                f.write("timestamp,site,hour,ghi_wm2,solar_kw,load_kw,"
+                                        "battery_kw,soc_pct,unmet_kw,confidence,"
+                                        "bias_solar,bias_load\n")
+                            f.write(",".join(str(x) for x in [
+                                dt.datetime.now().isoformat(timespec="seconds"),
+                                cfg["site_name"], hod, round(d["ghi"], 1),
+                                round(d["solar"], 2), round(d["load"], 2),
+                                round(d["power"], 2), round(S["soc"]*100, 1),
+                                round(d["unmet"], 2),
+                                d.get("conf") if d.get("conf") is not None else "",
+                                round(self.bias["solar"], 4), round(self.bias["load"], 4)]) + "\n")
+                        cf = d.get("conf")
+                        if (cf is not None and cf < 0.6) or d["unmet"] > 0.5:
+                            q = os.path.join(ASSETS_DIR, "active_learning_queue.csv")
+                            newq = not os.path.exists(q)
+                            with open(q, "a") as f:
+                                if newq:
+                                    f.write("timestamp,site,hour,reason,confidence,unmet_kw\n")
+                                f.write(",".join(str(x) for x in [
+                                    dt.datetime.now().isoformat(timespec="seconds"),
+                                    cfg["site_name"], hod,
+                                    ("low_confidence" if (cf is not None and cf < 0.6) else "load_shed"),
+                                    cf if cf is not None else "", round(d["unmet"], 2)]) + "\n")
+                    except Exception:
+                        pass
                     if hod == 0:                              # midnight: archive the day
                         sp = S["today"]["served"]/S["today"]["loadE"]*100 if S["today"]["loadE"] > 0 else 100
                         S["days"].append({"date": S["today"]["date"], "served": round(sp, 1),
@@ -476,6 +560,16 @@ def api_start(cfg: StartCfg, x_auth: str = Header(default="")):
     c = cfg.dict()
     c["soc"] = max(10.0, min(95.0, c["soc"]))
     return JSONResponse(CTRL.start(c))
+
+@app.get("/api/production-log")
+def production_log():
+    """Public export of logged inference data (weather, dispatch, confidence).
+    Contains no personal data."""
+    p = os.path.join(ASSETS_DIR, "production_log.csv")
+    if os.path.isfile(p):
+        return FileResponse(p, media_type="text/csv",
+                            headers={"Cache-Control": "no-store"})
+    raise HTTPException(status_code=404, detail="no production data logged yet")
 
 @app.get("/api/state")
 def api_state():

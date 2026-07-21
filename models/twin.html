@@ -190,6 +190,12 @@
   #nav button.on{background:#12a566;color:#ffffff;border-color:#12a566;}
   .dlbtn{background:transparent;color:#2fd38a;border-color:#2fd38a;}
   .dlbtn:hover{background:rgba(47,211,138,.12);}
+
+  .drv{display:flex;align-items:center;gap:8px;margin:3px 0;font:11.5px var(--mono);color:#9fb2c2;}
+  .drv .n{width:130px;}
+  .drv .b{flex:1;height:7px;background:#1c2938;border-radius:4px;position:relative;}
+  .drv .b i{position:absolute;top:0;bottom:0;border-radius:4px;}
+  .drv .v{width:64px;text-align:right;color:#c9dae6;}
 </style>
 <div id="home">
   <div id="slides"><div class="shade"></div></div>
@@ -303,6 +309,8 @@
           <div class="sub">PPO residual (x0.25)</div><div class="bar"><i id="bRes"></i></div>
           <div class="sub">Final action</div><div class="bar"><i id="bAct"></i></div>
           <div class="sub" id="dInfo" style="margin-top:6px;"></div>
+          <div class="sub" id="dConf" style="margin-top:8px;color:#7fe3ad !important;"></div>
+          <div id="drivers" style="margin-top:6px;"></div>
         </div>
         <div class="panel"><div class="h" style="margin:8px 0 0 10px">Operations log</div><div id="log"></div></div>
       </div>
@@ -745,6 +753,22 @@ function fillDash(){
   function setbar(id,v,col){const i=document.getElementById(id);const w=Math.abs(v)*50;
     i.style.background=col;i.style.width=w+'%';i.style.left=(v>=0?50:50-w)+'%';}
   setbar('bBase',S.base,'#64748b'); setbar('bRes',S.resid,'#0891b2'); setbar('bAct',S.act,'#10b981');
+  const cEl=document.getElementById('dConf');
+  if(cEl) cEl.textContent = (S.conf==null) ? '' :
+    'Forecast confidence '+Math.round(S.conf*100)+'%  (MC dropout ensemble of 8)';
+  const dv=document.getElementById('drivers');
+  if(dv){
+    const ds=(S.drivers||[]).slice(0,3);
+    dv.innerHTML = ds.length ? '<div class="sub" style="margin-bottom:2px;">Decision drivers (sensitivity)</div>'+
+      ds.map(d0=>{
+        const mag=Math.min(Math.abs(d0.impact_kw)/Math.max(1,S.maxP*0.25)*100,100);
+        const col=d0.impact_kw>=0?'#2fd38a':'#5b9bff';
+        const side=d0.impact_kw>=0?'left:50%;width:'+(mag/2)+'%':'right:50%;width:'+(mag/2)+'%';
+        return '<div class="drv"><span class="n">'+d0.name+'</span>'+
+               '<span class="b"><i style="'+side+';background:'+col+'"></i></span>'+
+               '<span class="v">'+(d0.impact_kw>=0?'+':'')+d0.impact_kw.toFixed(1)+' kW</span></div>';
+      }).join('') : '';
+  }
   document.getElementById('dInfo').innerHTML='GHI '+Math.round(S.ghi)+' W/m² · solar '+Math.round(S.solar)+
      ' kW · load '+Math.round(S.load)+' kW'+(S.unmet>0.5?' · <span style="color:#ef4444">⚠ shed '+Math.round(S.unmet)+' kW</span>':'');
   document.getElementById('log').innerHTML=(LOG.length?LOG.slice(-18).reverse():['']).join('<br>');
@@ -921,6 +945,7 @@ function handle(s){
        ghi:L.ghi, base:L.base_act, resid:L.residual, act:L.act, unmet:L.unmet,
        kwp:cfg.kwp, kwh:cfg.kwh, loaddes:cfg.load, maxP:cfg.maxP,
        served:L.served_day, lol:L.lol_day, efc:L.efc,
+       conf:L.conf, drivers:L.drivers||[],
        ready:(mm.have_lstm&&mm.have_ppo), running:(s.status==='running')},
     HIST:s.hist, FC:{solar:L.fc_solar,load:L.fc_load}, LOG:s.log,
     GHI24:(s.weather||{}).ghi_today});
