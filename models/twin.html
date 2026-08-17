@@ -580,11 +580,11 @@ function rampColor(arr,h){for(let i=0;i<arr.length-1;i++){if(h>=arr[i][0]&&h<=ar
 const labelsRoot=document.getElementById('labels'); let labelsOn=true;
 const LABELS=[
   {anchor:solarAnchor.clone().setY(4.4), title:'Solar array', sub:()=>tier.kwp+' kWp'},
-  {anchor:sensorAnchor, title:'Weather sensors', sub:()=>Math.round(ghiNow(sim.hour))+' W/m²'},
+  {anchor:sensorAnchor, title:'Weather sensors', sub:()=>LIVEREADY?Math.round(ghiNow(sim.hour))+' W/m²':'--'},
   {anchor:new THREE.Vector3(2,4.2,10), title:'Battery storage', sub:()=>tier.kwh+' kWh · '+Math.round(sim.soc*100)+'%'},
   {anchor:emsAnchor, title:'AI Battery EMS', sub:()=>'LSTM + PPO'},
   {anchor:invAnchor.clone().setY(3.9), title:'Inverter / PCS', sub:()=>null},
-  {anchor:new THREE.Vector3(17,3.6,-13), title:'Community load', sub:()=>Math.round(loadKW(sim.hour))+' kW'},
+  {anchor:new THREE.Vector3(17,3.6,-13), title:'Community load', sub:()=>LIVEREADY?Math.round(loadKW(sim.hour))+' kW':'--'},
 ];
 LABELS.forEach(L=>{const el=document.createElement('div');el.className='lab3d';
   el.innerHTML='<b>'+L.title+'</b>'+(L.sub()!==null?'<span></span>':'');L.el=el;L.span=el.querySelector('span');labelsRoot.appendChild(el);});
@@ -630,10 +630,10 @@ function update3D(st, now, real){
   f.emsBatt.from.copy(emsAnchor);f.emsBatt.to.copy(battBus);f.emsBatt.active=0.4+0.6*act;
   for(const k in f)updateFlow(f[k],real);
   updateCamera(real); renderer.render(scene,camera); updateLabels();
+  if(!LIVEREADY) return;   // keep the 'Starting run' message until real state arrives
   const dd=document.getElementById('d3dec'),ds=document.getElementById('d3stat');
   dd.textContent = st.power>0.5?`Charge ${Math.round(st.power)} kW`:st.power<-0.5?`Discharge ${Math.round(-st.power)} kW`:'Holding';
   dd.style.color = ready?'var(--ink)':'var(--muted)';
-  if(!LIVEREADY) return;   // keep the 'Starting run' message until real state arrives
   ds.textContent = st.unmet<0.01?'Load served · '+(ready?'Real LSTM + PPO':'Rule based control'):('SHORTFALL '+Math.round(st.unmet)+' kW');
   ds.style.color = st.unmet<0.01?'var(--good)':'var(--bad)';
 }
