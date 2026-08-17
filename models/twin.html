@@ -396,6 +396,7 @@ let tier={kwp:75, kwh:237, load:8.4};
 let maxP=118.5;
 let ready=false;
 let sim={hour:12, soc:0.5, soh:1.0};
+var LIVEREADY=false;   // true once real server state has been applied
 const LOAD_SHAPE=[.45,.40,.38,.38,.42,.55,.85,1.05,.95,.82,.78,.80,
                   .82,.80,.78,.82,.95,1.35,1.95,2.20,2.05,1.55,.95,.60];
 let DAY={ghi:Array(24).fill(0), month:6, dow:2};
@@ -632,6 +633,7 @@ function update3D(st, now, real){
   const dd=document.getElementById('d3dec'),ds=document.getElementById('d3stat');
   dd.textContent = st.power>0.5?`Charge ${Math.round(st.power)} kW`:st.power<-0.5?`Discharge ${Math.round(-st.power)} kW`:'Holding';
   dd.style.color = ready?'var(--ink)':'var(--muted)';
+  if(!LIVEREADY) return;   // keep the 'Starting run' message until real state arrives
   ds.textContent = st.unmet<0.01?'Load served · '+(ready?'Real LSTM + PPO':'Rule based control'):('SHORTFALL '+Math.round(st.unmet)+' kW');
   ds.style.color = st.unmet<0.01?'var(--good)':'var(--bad)';
 }
@@ -659,7 +661,7 @@ function loop(){
   const now=performance.now(); const real=Math.min((now-_last)/1000,.1); _last=now;
   if(view!=='3d')return;
   autoRot=false; camAz = 1.05 + (Date.now()/1000)*0.05;   // continuous orbit across reseeds
-  const dtH=real/3600*(S.running?1:0);                     // true real-time step
+  const dtH=real/3600*((S.running&&LIVEREADY)?1:0);         // frozen until real state arrives
   sim.hour=(HOUR0+(S.running?(Date.now()-T0)/3.6e6:0))%24;
   // local weather + load at the advanced clock
   const ghiL=dayVal(DAY.ghi,sim.hour);
@@ -986,7 +988,27 @@ function handle(s){
     : (mm.have_ppo?'PPO only':(mm.have_lstm?'LSTM only':'Rule based control'));
   if(idle) return;
   const cfg=s.cfg, L=s.live, ck=s.clock;
-  if(!L){ return; }                                   // first tick pending
+  if(!L){
+    // First tick not computed yet: show the operator's OWN configuration and a
+    // waiting state, never placeholder physics.
+    LIVEREADY=false;
+    if(cfg){
+      tier.kwp=cfg.kwp; tier.kwh=cfg.kwh; tier.load=cfg.load; maxP=cfg.maxP;
+      sim.soc=s.soc; sim.soh=s.soh; sim.hour=ck?ck.hod:sim.hour;
+      S.kwp=cfg.kwp; S.kwh=cfg.kwh; S.loaddes=cfg.load; S.maxP=cfg.maxP;
+      S.soc=s.soc; S.soh=s.soh; S.hour=ck?ck.hod:S.hour; S.running=false;
+      S.solar=0; S.load=0; S.power=0; S.unmet=0; S.ghi=0;
+      S.base=0; S.resid=0; S.act=0; S.conf=null; S.drivers=[];
+      $('tTitle').textContent=cfg.site_name+'  '+Math.round(cfg.kwp)+' kWp / '+Math.round(cfg.kwh)+' kWh';
+      try{ fillDash(); }catch(e){}
+    }
+    const dd=$('d3dec'), ds=$('d3stat');
+    if(dd) dd.textContent='Starting run...';
+    if(ds){ ds.textContent='Fetching weather and computing first decision'; ds.style.color='var(--muted)'; }
+    $('tMeta').textContent='Starting run, first decision pending';
+    return;
+  }
+  LIVEREADY=true;
   applyState({
     S:{hour:ck.hod, soc:s.soc, soh:s.soh, solar:L.solar, load:L.load, power:L.power,
        ghi:L.ghi, base:L.base_act, resid:L.residual, act:L.act, unmet:L.unmet,
@@ -1070,7 +1092,7 @@ $('startbtn').onclick=async()=>{
                                       body:JSON.stringify(body)});
     if(r.status===401){TOKEN='';localStorage.removeItem('srep_token');showPage('login');throw new Error('Session expired, please sign in again');}
     if(!r.ok) throw new Error('server responded '+r.status);
-    planDrawn=false; await tick();
+    planDrawn=false; LIVEREADY=false; await tick(); setTimeout(tick,600);
   }catch(err){ $('seterr').textContent='Could not start: '+err.message; $('seterr').style.display='block'; }
   btn.disabled=false; btn.textContent='Start 24 hour real time run';
 };
@@ -1078,7 +1100,7 @@ $('tStop').onclick=async()=>{
   if(!confirm('Stop the current run and return to setup?'))return;
   try{const r=await fetch('/api/stop',{method:'POST',headers:{'x-auth':TOKEN}});
       if(r.status===401){TOKEN='';localStorage.removeItem('srep_token');showPage('login');return;}}catch(e){}
-  planDrawn=false; showPage('setup');
+  planDrawn=false; LIVEREADY=false; showPage('setup');
 };
 
 /* ---------- poll loop (reattaches to a live run on page load) ---------- */
